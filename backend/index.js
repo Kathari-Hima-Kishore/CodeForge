@@ -471,23 +471,23 @@ async function saveSessionToFirestore(session) {
     const sessionRef = db.collection("sessions").doc(session.id);
     const sessionDoc = await sessionRef.get();
 
-    if (sessionDoc.exists()) {
-      // Session exists - only update participant connection state
+    const docExists = typeof sessionDoc?.exists === 'function' ? sessionDoc.exists() : false;
+    
+    if (docExists) {
       await sessionRef.update({
         participants: session.participants,
         isActive: session.is_active
       });
       console.log(`💾 Session ${session.id} participants synced to Firestore`);
     } else {
-      // New session - create with initial structure
       const sessionData = {
         sessionId: session.id,
         name: session.name,
         hostId: session.host_uid,
         hostName: session.participants[session.host_uid]?.name || "Host",
         participants: session.participants,
-        files: [], // Empty - frontend will populate
-        messages: [], // Empty - frontend will populate
+        files: [],
+        messages: [],
         isActive: session.is_active,
         createdAt: session.created_at_ms || new Date(session.created_at).getTime()
       };
@@ -1092,49 +1092,14 @@ app.get('/api/dockerhub/repos', async (req, res) => {
   let { identifier, password } = req.query;
   
   if (!identifier || !password) {
-    return res.status(400).json({ error: 'Username/Email and password required', repos: [] });
+    return res.status(400).json({ error: 'Username and password/PAT required', repos: [] });
   }
 
   const https = require('https');
 
-  // Check if input looks like email
-  const isEmail = String(identifier).includes('@');
-  let resolvedIdentifier = identifier;
-
-  // If email, try to resolve to username first
-  if (isEmail) {
-    console.log(`[Docker Hub] Input appears to be email, trying to resolve username...`);
-    try {
-      const lookupRes = await new Promise((resolve) => {
-        const req = https.request({
-          hostname: 'hub.docker.com',
-          path: `/v2/users/${encodeURIComponent(identifier)}`,
-          method: 'GET',
-          headers: { 'Content-Type': 'application/json' }
-        }, (res) => {
-          let data = '';
-          res.on('data', chunk => data += chunk);
-          res.on('end', () => resolve({ statusCode: res.statusCode, data }));
-        });
-        req.on('error', () => resolve({ statusCode: 500, data: '{}' }));
-        req.end();
-      });
-      
-      if (lookupRes.statusCode === 200) {
-        const userData = JSON.parse(lookupRes.data || '{}');
-        if (userData.username) {
-          resolvedIdentifier = userData.username;
-          console.log(`[Docker Hub] Resolved email to username: ${resolvedIdentifier}`);
-        }
-      }
-    } catch (e) {
-      console.log(`[Docker Hub] Could not resolve email to username: ${e.message}`);
-    }
-  }
-
   try {
-    const authData = JSON.stringify({ identifier: resolvedIdentifier, secret: password });
-    console.log(`[Docker Hub] Attempting auth with identifier: ${resolvedIdentifier}`);
+    const authData = JSON.stringify({ identifier, secret: password });
+    console.log(`[Docker Hub] Attempting auth with identifier: ${identifier}`);
     
     const authRes = await new Promise((resolve) => {
       const req = https.request({
@@ -1161,7 +1126,7 @@ app.get('/api/dockerhub/repos', async (req, res) => {
     console.log(`[Docker Hub] Auth response status: ${authRes.statusCode}, data: ${(authRes.data || '').substring(0, 500)}`);
 
     if (authRes.statusCode !== 200) {
-      let errorMsg = 'Invalid username or password. You can use your Docker Hub password OR a Personal Access Token (PAT). Create a PAT at https://hub.docker.com/settings/security';
+      let errorMsg = 'Authentication failed. Docker Hub now requires a Personal Access Token (PAT) instead of password. Create one at: https://hub.docker.com/settings/security';
       try {
         const errData = JSON.parse(authRes.data || '{}');
         errorMsg = errData.detail || errData.message || errorMsg;
@@ -1176,53 +1141,52 @@ app.get('/api/dockerhub/repos', async (req, res) => {
     const token = authJson.token || authJson.access_token;
     
     if (!token) {
-      console.log(`[Docker Hub] No token in response. Full response:`, authRes.data);
+      console.log(`[Docker Hub] No token in response. Full response: ${authRes.data}`);
       return res.json({ error: 'Authentication failed - no token received. Try using a Personal Access Token (PAT) instead of password.', repos: [] });
     }
 
-    console.log(`[Docker Hub] Got token, fetching user info...`);
+    console.log(`[Docker Hub] Got token, attempting to extract username...`);
 
-    // Get user info to find username
-    const userRes = await new Promise((resolve) => {
-      const req = https.request({
-        hostname: 'hub.docker.com',
-        path: '/v2/user/',
-        method: 'GET',
-        headers: { 
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
+    let actualUsername = null;
+
+    try {
+      const tokenParts = token.split('.');
+      if (tokenParts.length === 3) {
+        const payload = JSON.parse(Buffer.from(tokenParts[1], 'base64').toString());
+        if (payload.username) {
+          actualUsername = payload.username;
+          console.log(`[Docker Hub] Extracted username from JWT: ${actualUsername}`);
         }
-      }, (res) => {
-        let data = '';
-        res.on('data', chunk => data += chunk);
-        res.on('end', () => resolve({ statusCode: res.statusCode, data }));
-      });
-      req.on('error', () => resolve({ statusCode: 500, data: '{}' }));
-      req.end();
-    });
-
-    let actualUsername = resolvedIdentifier;
-    if (userRes.statusCode === 200) {
-      const userJson = JSON.parse(userRes.data || '{}');
-      actualUsername = userJson.username;
-      console.log(`[Docker Hub] Got username: ${actualUsername}, user data: ${userRes.data}`);
-    } else {
-      console.log(`[Docker Hub] Could not get user info, status: ${userRes.statusCode}, response: ${userRes.data}`);
+        if (payload.email) {
+          console.log(`[Docker Hub] JWT contains email: ${payload.email}`);
+        }
+      }
+    } catch (e) {
+      console.log(`[Docker Hub] Could not extract username from JWT: ${e.message}`);
     }
 
     if (!actualUsername) {
-      return res.json({ error: 'Could not determine Docker Hub username', repos: [] });
+      if (!identifier.includes('@')) {
+        actualUsername = identifier;
+        console.log(`[Docker Hub] Using input as username: ${actualUsername}`);
+      } else {
+        return res.json({ error: 'Could not determine Docker Hub username. Please enter your Docker Hub username (not email).', repos: [] });
+      }
     }
 
     const repos = [];
     let page = 1;
     const maxPages = 5;
 
-    while (page <= maxPages) {
+    // Try the new Docker Hub API first (v2/repositories/{namespace}/)
+    let listSuccess = false;
+    
+    // Try with /v2/repositories/{username}/ endpoint
+    while (page <= maxPages && !listSuccess) {
       const listRes = await new Promise((resolve) => {
         const req = https.request({
           hostname: 'hub.docker.com',
-          path: `/v2/namespaces/${actualUsername}/repositories?page=${page}&page_size=100`,
+          path: `/v2/repositories/${actualUsername}/?page=${page}&page_size=100`,
           method: 'GET',
           headers: { 'Authorization': `Bearer ${token}` }
         }, (res) => {
@@ -1234,24 +1198,73 @@ app.get('/api/dockerhub/repos', async (req, res) => {
         req.end();
       });
 
-      if (listRes.statusCode !== 200) break;
-      
-      const listJson = JSON.parse(listRes.data || '{}');
-      if (listJson.results && listJson.results.length > 0) {
-        listJson.results.forEach(repo => {
-          repos.push({
-            name: repo.name,
-            description: repo.description || '',
-            isPrivate: repo.is_private,
-            pulls: repo.pull_count
+      if (listRes.statusCode === 200) {
+        const listJson = JSON.parse(listRes.data || '{}');
+        if (listJson.results && listJson.results.length > 0) {
+          listSuccess = true;
+          listJson.results.forEach(repo => {
+            repos.push({
+              name: repo.name,
+              description: repo.description || '',
+              isPrivate: repo.is_private,
+              pulls: repo.pull_count
+            });
           });
-        });
-        if (!listJson.next) break;
-        page++;
+          if (!listJson.next) break;
+          page++;
+        } else {
+          break;
+        }
       } else {
+        console.log(`[Docker Hub] Repository list status: ${listRes.statusCode}, response: ${listRes.data}`);
         break;
       }
     }
+
+    // If no repos found with /v2/repositories/, try the namespace endpoint
+    if (repos.length === 0) {
+      console.log(`[Docker Hub] No repos from /v2/repositories/, trying namespace endpoint...`);
+      page = 1;
+      while (page <= maxPages) {
+        const listRes = await new Promise((resolve) => {
+          const req = https.request({
+            hostname: 'hub.docker.com',
+            path: `/v2/namespaces/${actualUsername}/repositories?page=${page}&page_size=100`,
+            method: 'GET',
+            headers: { 'Authorization': `Bearer ${token}` }
+          }, (res) => {
+            let data = '';
+            res.on('data', chunk => data += chunk);
+            res.on('end', () => resolve({ statusCode: res.statusCode, data }));
+          });
+          req.on('error', () => resolve({ statusCode: 500, data: '[]' }));
+          req.end();
+        });
+
+        if (listRes.statusCode !== 200) {
+          console.log(`[Docker Hub] Namespace endpoint status: ${listRes.statusCode}`);
+          break;
+        }
+        
+        const listJson = JSON.parse(listRes.data || '{}');
+        if (listJson.results && listJson.results.length > 0) {
+          listJson.results.forEach(repo => {
+            repos.push({
+              name: repo.name,
+              description: repo.description || '',
+              isPrivate: repo.is_private,
+              pulls: repo.pull_count
+            });
+          });
+          if (!listJson.next) break;
+          page++;
+        } else {
+          break;
+        }
+      }
+    }
+
+    console.log(`[Docker Hub] Found ${repos.length} repositories`);
 
     res.json({ repos, error: null, username: actualUsername });
   } catch (e) {

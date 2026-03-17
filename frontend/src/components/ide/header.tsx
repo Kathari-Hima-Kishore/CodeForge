@@ -579,17 +579,17 @@ export function IdeHeader() {
                 {deployAction === 'dockerhub' && (
                   <div className="space-y-3 p-3 rounded-lg bg-secondary/30 border border-border/30">
                     <div className="space-y-1">
-                      <Label htmlFor="dh-user" className="text-xs">Docker Hub Username or Email</Label>
+                      <Label htmlFor="dh-user" className="text-xs">Docker Hub Username</Label>
                       <Input
                         id="dh-user"
                         value={dockerHubUsername}
                         onChange={(e) => setDockerHubUsername(e.target.value)}
-                        placeholder="your-username (not email)"
+                        placeholder="your-username"
                         className="h-9 text-sm"
                       />
                     </div>
                     <div className="space-y-1">
-                      <Label htmlFor="dh-pass" className="text-xs">Docker Hub Password</Label>
+                      <Label htmlFor="dh-pass" className="text-xs">Docker Hub Password or PAT</Label>
                       <Input
                         id="dh-pass"
                         type="password"
@@ -617,7 +617,21 @@ export function IdeHeader() {
                       )}
                     </Button>
 
-                    {!isLoadingDockerHubRepos && dockerHubUsername && dockerHubPassword && dockerHubRepos.length > 0 && (
+                    {dockerHubReposError && (
+                      <div className="p-2 rounded bg-red-500/10 border border-red-500/20">
+                        <p className="text-[11px] text-red-400">{dockerHubReposError}</p>
+                      </div>
+                    )}
+
+                    {!isLoadingDockerHubRepos && dockerHubUsername && dockerHubPassword && !dockerHubReposError && dockerHubRepos.length === 0 && (
+                      <div className="p-2 rounded bg-blue-500/10 border border-blue-500/20">
+                        <p className="text-[11px] text-blue-400">
+                          No repositories found. Enter a name below to create or push to an existing repo.
+                        </p>
+                      </div>
+                    )}
+
+                    {dockerHubRepos.length > 0 && !selectedDockerHubRepo && !dockerHubCustomRepo ? (
                       <div className="space-y-1">
                         <Label htmlFor="dh-repo" className="text-xs">Select Repository</Label>
                         <select
@@ -641,13 +655,9 @@ export function IdeHeader() {
                           <option value="__custom__">+ Enter custom repository name</option>
                         </select>
                       </div>
-                    )}
-
-                    {(!isLoadingDockerHubRepos && (dockerHubReposError || dockerHubRepos.length === 0)) && (
+                    ) : (
                       <div className="space-y-1">
-                        <Label htmlFor="dh-custom-repo" className="text-xs">
-                          {dockerHubReposError ? 'Enter repository name (fetch failed)' : 'Repository Name'}
-                        </Label>
+                        <Label htmlFor="dh-custom-repo" className="text-xs">Repository Name</Label>
                         <Input
                           id="dh-custom-repo"
                           value={dockerHubCustomRepo}
@@ -658,8 +668,17 @@ export function IdeHeader() {
                           placeholder={session?.name || 'my-repo'}
                           className="h-9 text-sm"
                         />
-                        {dockerHubReposError && (
-                          <p className="text-[11px] text-destructive">{dockerHubReposError}</p>
+                        {dockerHubRepos.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setDockerHubCustomRepo('');
+                              setSelectedDockerHubRepo('');
+                            }}
+                            className="text-[11px] text-muted-foreground hover:text-foreground underline"
+                          >
+                            ← Back to repository list
+                          </button>
                         )}
                       </div>
                     )}

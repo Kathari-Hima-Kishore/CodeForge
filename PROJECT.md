@@ -1,6 +1,6 @@
 # CodeForge - Comprehensive Project Documentation
 
-**Last Updated**: 2026-03-14
+**Last Updated**: 2026-03-18
 **Project**: Real-time Collaborative Browser IDE
 **Status**: Fully Functional — Session streaming execution, persistence fixes, landing page redesign complete
 
@@ -79,7 +79,7 @@ Access at **http://localhost:9002**
 - 🎭 **Role-based Access** - Host, Co-Host, Editor, Viewer roles
 - 💬 **Live Chat** - Built-in messaging for session participants
 - 🔒 **File Locking** - Prevents edit conflicts (auto-expire: 5 min, instant release)
-- ▶️ **Multi-language Execution** - Python, JavaScript, TypeScript, Java, C++, C, C#, HTML/CSS
+- ▶️ **Multi-language Execution** - HTML, CSS, JavaScript, TypeScript, Python, Java, C, C++
 - 📥 **Interactive Input** - Programs read from stdin in real-time
 - 🖥️ **Terminal** - Full terminal with streaming (no timeout)
 - 🐳 **Docker Export** - Build and push container images to Docker Hub
@@ -411,7 +411,7 @@ Header (session info, share, leave, account)
 - Theme: `vs-dark`
 - Font: JetBrains Mono
 - Features: Line numbers, minimap, word wrap, auto-format, bracket matching
-- Languages: JavaScript, TypeScript, Python, Java, C++, C, C#, HTML, CSS
+- Languages: HTML, CSS, JavaScript, TypeScript, Python, Java, C, C++
 
 ---
 
@@ -442,7 +442,7 @@ Backend supports ngrok URL registration. Frontend UI pending.
 ✅ Session persistence + Firestore sync
 ✅ Streaming code execution + stdin input (NEW)
 ✅ Java class name auto-detection (NEW)
-✅ Multi-language (Python, JS, TS, Java, C++, C, C#, HTML/CSS)
+✅ Multi-language (HTML, CSS, JavaScript, TypeScript, Python, Java, C, C++)
 ✅ Terminal streaming (no timeout)
 ✅ File locking (5-min auto-expire, instant release)
 ✅ Docker Hub export
