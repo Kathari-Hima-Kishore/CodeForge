@@ -115,17 +115,18 @@ export function FileExplorer({ isCollapsed = false, onCollapse }: { isCollapsed?
 
   if (isCollapsed) {
     return (
-      <aside className="flex-shrink-0 border-r border-[#1a1b2e] bg-[#0a0b14] flex flex-col items-center py-3 gap-3 h-full w-full">
+      <aside className="flex-shrink-0 border-r border-[#1a1b2e]/40 bg-[#080c1a]/60 flex flex-col items-center py-4 gap-4 h-full w-full relative overflow-hidden">
+        <div className="absolute inset-0 bg-gradient-to-b from-primary/5 via-transparent to-transparent pointer-events-none" />
         <Button
           variant="ghost" size="icon"
-          className="h-7 w-7 text-gray-600 hover:text-gray-400 hover:bg-[#1a1b2e] rounded-md"
+          className="h-8 w-8 text-gray-500 hover:text-gray-300 hover:bg-[#1a1b2e] rounded-lg transition-all"
           onClick={() => onCollapse?.(false)}
           title="Expand"
         >
-          <ChevronRight className="h-3.5 w-3.5" />
+          <ChevronRight className="h-4 w-4" />
         </Button>
-        <div className="w-4 h-px bg-[#1a1b2e]" />
-        <Folder className="h-4 w-4 text-yellow-500/50" />
+        <div className="w-6 h-px bg-gradient-to-r from-transparent via-primary/20 to-transparent" />
+        <Folder className="h-4 w-4 text-yellow-500/40" />
       </aside>
     );
   }
@@ -227,17 +228,19 @@ export function FileExplorer({ isCollapsed = false, onCollapse }: { isCollapsed?
   };
 
   return (
-    <aside className="border-r border-[#1a1b2e] bg-[#0a0b14] flex flex-col h-full w-full">
+    <aside className="border-r border-white/5 bg-black/20 flex flex-col h-full w-full relative overflow-hidden">
+      <div className="absolute inset-0 bg-gradient-to-b from-white/3 via-transparent to-transparent pointer-events-none" />
+      <div className="absolute inset-y-0 right-0 w-px bg-gradient-to-b from-white/10 via-white/5 to-transparent" />
       {/* Header */}
-      <div className="flex items-center justify-between px-2.5 py-2 border-b border-[#1a1b2e] shrink-0">
-        <div className="flex items-center gap-1.5">
+      <div className="flex items-center justify-between px-3 py-2.5 border-b border-[#1a1b2e]/50 shrink-0 bg-gradient-to-r from-[#050510]/80 to-transparent">
+        <div className="flex items-center gap-2">
           <button
-            className="h-5 w-5 flex items-center justify-center rounded hover:bg-[#1a1b2e] text-gray-700 hover:text-gray-400 transition-colors"
+            className="h-5 w-5 flex items-center justify-center rounded hover:bg-[#1a1b2e] text-gray-500 hover:text-gray-300 transition-colors"
             onClick={() => onCollapse?.(true)}
           >
-            <ChevronLeft className="h-3.5 w-3.5" />
+            <ChevronLeft className="h-4 w-4" />
           </button>
-          <span className="text-[10px] font-bold text-gray-600 uppercase tracking-wider">Files</span>
+          <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Files</span>
         </div>
         {canEdit && (
           <div className="flex items-center gap-0.5">

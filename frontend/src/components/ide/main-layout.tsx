@@ -50,14 +50,14 @@ function ResizeHandle({ onResize, direction = 'horizontal' }: {
   return (
     <div
       className={direction === 'horizontal' 
-        ? 'w-0.5 bg-border hover:bg-primary/80 cursor-col-resize flex-shrink-0 z-10 transition-colors group relative' 
-        : 'h-0.5 bg-border hover:bg-primary/80 cursor-row-resize flex-shrink-0 z-10 transition-colors group relative'
+        ? 'w-1 bg-border/50 hover:bg-white/20 cursor-col-resize flex-shrink-0 z-10 transition-colors group relative' 
+        : 'h-1 bg-border/50 hover:bg-white/20 cursor-row-resize flex-shrink-0 z-10 transition-colors group relative'
       }
       onMouseDown={handleMouseDown}
     >
       <div className={direction === 'horizontal' 
-        ? 'absolute inset-y-0 -left-0.5 -right-0.5 group-hover:bg-primary/20' 
-        : 'absolute inset-x-0 -top-0.5 -bottom-0.5 group-hover:bg-primary/20'
+        ? 'absolute inset-y-0 -left-0.5 -right-0.5 group-hover:bg-white/10 rounded-full' 
+        : 'absolute inset-x-0 -top-0.5 -bottom-0.5 group-hover:bg-white/10 rounded-full'
       } />
     </div>
   );
@@ -87,7 +87,9 @@ export function MainLayout() {
   const getChatWidth = () => chatCollapsed ? 48 : middleWidth;
 
   return (
-    <div className="flex flex-col h-screen w-screen overflow-hidden bg-background text-foreground font-body">
+    <div className="flex flex-col h-screen w-screen overflow-hidden bg-background text-foreground font-body relative">
+      <div className="absolute inset-0 bg-grid-pattern opacity-[0.02] pointer-events-none" />
+      <div className="absolute inset-0 bg-noise pointer-events-none" />
       <IdeHeader />
       <LanguageSupportChecker />
       <div className="flex flex-1 overflow-hidden">

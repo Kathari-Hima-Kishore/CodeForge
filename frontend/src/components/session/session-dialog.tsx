@@ -10,16 +10,10 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   Loader2, Plus, LogIn, LogOut, ArrowLeft, Users,
   Clock, Crown, RefreshCw, ChevronRight, Terminal,
-  Sparkles, Hash, Zap, Code2, FolderOpen,
+  FolderOpen, CodeXml,
 } from 'lucide-react';
 
 type SessionMode = 'select' | 'create' | 'join';
-
-const FEATURE_CHIPS = [
-  { icon: Users, label: 'Live Cursors',   color: 'text-violet-400',  bg: 'bg-violet-500/10 border-violet-500/20' },
-  { icon: Code2, label: 'Multi-Language', color: 'text-emerald-400', bg: 'bg-emerald-500/10 border-emerald-500/20' },
-  { icon: Zap,   label: 'Instant Run',    color: 'text-amber-400',   bg: 'bg-amber-500/10 border-amber-500/20' },
-];
 
 export function SessionDialog() {
   const {
@@ -90,70 +84,41 @@ export function SessionDialog() {
   const initials = userName.slice(0, 2).toUpperCase();
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background relative overflow-hidden p-4">
-      {/* Background decoration */}
-      <div className="absolute inset-0 bg-[radial-gradient(ellipse_70%_50%_at_50%_-10%,rgba(99,102,241,0.08),transparent)]" />
-      <div className="absolute inset-0 bg-[radial-gradient(ellipse_40%_30%_at_80%_90%,rgba(168,85,247,0.05),transparent)]" />
-      <div
-        className="absolute inset-0 opacity-[0.02]"
-        style={{
-          backgroundImage: 'radial-gradient(circle, rgba(255,255,255,0.8) 1px, transparent 1px)',
-          backgroundSize: '28px 28px',
-        }}
-      />
-
+    <div className="min-h-screen flex items-center justify-center bg-[#0a0a0f] p-4">
       <div className="relative z-10 w-full max-w-[410px]">
 
         {/* Branding */}
-        <div className="text-center mb-6">
-          <div className="inline-flex items-center justify-center mb-3.5">
-            <div className="relative">
-              <div className="absolute inset-0 bg-primary/20 blur-2xl rounded-full scale-150" />
-              <div className="relative bg-gradient-to-br from-primary to-purple-600 p-3.5 rounded-2xl shadow-xl shadow-primary/20">
-                <Terminal className="h-8 w-8 text-white" />
-              </div>
+        <div className="text-center mb-10">
+          <div className="inline-flex items-center justify-center mb-5">
+            <div className="w-16 h-16 rounded-2xl bg-white/10 border border-white/10 flex items-center justify-center">
+              <Terminal className="h-8 w-8 text-white/80" />
             </div>
           </div>
-          <h1 className="text-2xl font-bold tracking-tight">
-            Code<span className="text-primary">Forge</span>
+          <h1 className="text-3xl font-black tracking-wider text-white">
+            CODEFORGE
           </h1>
-          <p className="text-xs text-muted-foreground/50 mt-1 font-medium tracking-wider uppercase">
+          <p className="text-xs text-white/30 mt-2 font-medium tracking-widest uppercase">
             Collaborative IDE
           </p>
-          {/* Feature chips */}
-          <div className="flex items-center justify-center gap-1.5 mt-3">
-            {FEATURE_CHIPS.map(({ icon: Icon, label, color, bg }) => (
-              <div
-                key={label}
-                className={`flex items-center gap-1.5 text-[11px] font-medium px-2.5 py-1 rounded-full border ${bg}`}
-              >
-                <Icon className={`h-3 w-3 ${color}`} />
-                <span className="text-muted-foreground">{label}</span>
-              </div>
-            ))}
-          </div>
         </div>
 
         {/* Main card */}
-        <div className="rounded-2xl border border-border/30 bg-card/60 backdrop-blur-xl shadow-2xl overflow-hidden">
-          {/* Shimmer line */}
-          <div className="h-px bg-gradient-to-r from-transparent via-primary/50 to-transparent" />
-
+        <div className="rounded-2xl border border-white/10 bg-white/5 overflow-hidden">
           <div className="p-5">
 
             {/* User greeting */}
             {mode === 'select' && (
-              <div className="flex items-center gap-3 mb-4 p-3 rounded-xl bg-secondary/25 border border-border/20">
-                <div className="w-9 h-9 rounded-full bg-gradient-to-br from-primary to-purple-600 flex items-center justify-center text-white text-xs font-bold shrink-0 shadow-md shadow-primary/20">
+              <div className="flex items-center gap-3 mb-4 p-3 rounded-xl bg-white/5 border border-white/10">
+                <div className="w-9 h-9 rounded-full bg-white/10 flex items-center justify-center text-white text-xs font-bold shrink-0">
                   {initials}
                 </div>
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm font-semibold truncate">{userName}</p>
-                  <p className="text-xs text-muted-foreground/60 truncate">{user?.email}</p>
+                  <p className="text-sm font-medium text-white truncate">{userName}</p>
+                  <p className="text-xs text-white/40 truncate">{user?.email}</p>
                 </div>
                 <div className="flex items-center gap-1.5 shrink-0 bg-emerald-500/10 border border-emerald-500/20 px-2 py-1 rounded-full">
-                  <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                  <span className="text-[10px] text-emerald-400 font-semibold">Online</span>
+                  <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                  <span className="text-[10px] text-emerald-400 font-medium">Online</span>
                 </div>
               </div>
             )}
@@ -174,87 +139,85 @@ export function SessionDialog() {
               <div className="space-y-3">
 
                 {/* Recent sessions */}
-                <div>
-                  <div className="flex items-center justify-between mb-2">
-                    <h3 className="text-[11px] font-bold text-muted-foreground/60 uppercase tracking-wider flex items-center gap-1.5">
-                      <Clock className="h-3 w-3" />
-                      Recent Sessions
-                    </h3>
-                    <button
-                      onClick={refreshMySessions}
-                      disabled={isLoadingSessions}
-                      className="flex items-center gap-1 text-[11px] text-muted-foreground/50 hover:text-muted-foreground transition-colors disabled:opacity-40 font-medium"
-                    >
-                      <RefreshCw className={`h-3 w-3 ${isLoadingSessions ? 'animate-spin' : ''}`} />
-                      Refresh
-                    </button>
-                  </div>
+                <div className="flex items-center justify-between mb-1">
+                  <h3 className="text-xs font-semibold text-white/40 uppercase tracking-wider flex items-center gap-1.5">
+                    <Clock className="h-3 w-3" />
+                    Recent Sessions
+                  </h3>
+                  <button
+                    onClick={refreshMySessions}
+                    disabled={isLoadingSessions}
+                    className="flex items-center gap-1 text-[11px] text-white/30 hover:text-white/50 transition-colors disabled:opacity-40 font-medium"
+                  >
+                    <RefreshCw className={`h-3 w-3 ${isLoadingSessions ? 'animate-spin' : ''}`} />
+                    Refresh
+                  </button>
+                </div>
 
-                  {isLoadingSessions ? (
-                    <div className="space-y-1.5">
-                      {[1, 2].map(i => (
-                        <div key={i} className="h-[52px] rounded-xl bg-secondary/30 border border-border/15 animate-pulse" />
+                {isLoadingSessions ? (
+                  <div className="space-y-1.5">
+                    {[1, 2].map(i => (
+                      <div key={i} className="h-[52px] rounded-xl bg-white/5 border border-white/5" />
+                    ))}
+                  </div>
+                ) : mySessions.length === 0 ? (
+                  <div className="flex flex-col items-center gap-2 py-6 text-center">
+                    <div className="w-9 h-9 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center">
+                      <FolderOpen className="h-4 w-4 text-white/20" />
+                    </div>
+                    <p className="text-xs text-white/30 font-medium">No recent sessions</p>
+                  </div>
+                ) : (
+                  <ScrollArea className="max-h-44">
+                    <div className="space-y-1 pr-1">
+                      {mySessions.map(session => (
+                        <button
+                          key={session.sessionId}
+                          onClick={() => handleRejoin(session)}
+                          disabled={isConnecting}
+                          className="w-full p-2.5 rounded-xl border border-white/10 bg-white/5 hover:bg-white/10 transition-colors text-left group disabled:opacity-50"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-1.5 mb-0.5">
+                                <span className="font-semibold text-sm truncate text-white">{session.name}</span>
+                                {session.isHost && (
+                                  <span className="flex items-center gap-0.5 text-[9px] bg-white/10 text-white/60 px-1.5 py-0.5 rounded-full font-medium shrink-0">
+                                    <Crown className="h-2 w-2" />
+                                    Host
+                                  </span>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-2 text-[11px] text-white/40">
+                                <span className="flex items-center gap-0.5">
+                                  <Users className="h-2.5 w-2.5" />
+                                  {session.participantCount}
+                                </span>
+                                <span>{formatTime(session.createdAt)}</span>
+                                <span className="font-mono text-[10px] bg-white/5 px-1.5 py-0.5 rounded text-white/30">
+                                  {session.sessionId}
+                                </span>
+                              </div>
+                            </div>
+                            <ChevronRight className="h-3.5 w-3.5 text-white/20 group-hover:text-white/50 group-hover:translate-x-0.5 transition-all shrink-0" />
+                          </div>
+                        </button>
                       ))}
                     </div>
-                  ) : mySessions.length === 0 ? (
-                    <div className="flex flex-col items-center gap-2 py-6 text-center">
-                      <div className="w-9 h-9 rounded-xl bg-secondary/40 border border-border/20 flex items-center justify-center">
-                        <FolderOpen className="h-4 w-4 text-muted-foreground/30" />
-                      </div>
-                      <p className="text-xs text-muted-foreground/40 font-medium">No recent sessions</p>
-                    </div>
-                  ) : (
-                    <ScrollArea className="max-h-44">
-                      <div className="space-y-1 pr-1">
-                        {mySessions.map(session => (
-                          <button
-                            key={session.sessionId}
-                            onClick={() => handleRejoin(session)}
-                            disabled={isConnecting}
-                            className="w-full p-2.5 rounded-xl border border-border/20 bg-background/20 hover:bg-secondary/35 hover:border-primary/20 transition-all duration-150 text-left group disabled:opacity-50"
-                          >
-                            <div className="flex items-center justify-between gap-2">
-                              <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-1.5 mb-0.5">
-                                  <span className="font-semibold text-sm truncate">{session.name}</span>
-                                  {session.isHost && (
-                                    <span className="flex items-center gap-0.5 text-[9px] bg-primary/10 text-primary px-1.5 py-0.5 rounded-full font-bold border border-primary/15 shrink-0">
-                                      <Crown className="h-2 w-2" />
-                                      Host
-                                    </span>
-                                  )}
-                                </div>
-                                <div className="flex items-center gap-2 text-[11px] text-muted-foreground/50">
-                                  <span className="flex items-center gap-0.5">
-                                    <Users className="h-2.5 w-2.5" />
-                                    {session.participantCount}
-                                  </span>
-                                  <span>{formatTime(session.createdAt)}</span>
-                                  <span className="font-mono text-[10px] bg-secondary/60 px-1.5 py-0.5 rounded border border-border/20 text-muted-foreground/40">
-                                    {session.sessionId}
-                                  </span>
-                                </div>
-                              </div>
-                              <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/25 group-hover:text-primary/70 group-hover:translate-x-0.5 transition-all shrink-0" />
-                            </div>
-                          </button>
-                        ))}
-                      </div>
-                    </ScrollArea>
-                  )}
-                </div>
+                  </ScrollArea>
+                )}
 
                 {/* Divider */}
                 <div className="flex items-center gap-3">
-                  <div className="flex-1 h-px bg-gradient-to-r from-transparent via-border/40 to-transparent" />
-                  <span className="text-[11px] text-muted-foreground/35 font-medium">or start new</span>
-                  <div className="flex-1 h-px bg-gradient-to-r from-transparent via-border/40 to-transparent" />
+                  <div className="flex-1 h-px bg-white/10" />
+                  <span className="text-[11px] text-white/30 font-medium">or start new</span>
+                  <div className="flex-1 h-px bg-white/10" />
                 </div>
 
                 {/* Action buttons */}
                 <Button
                   size="lg"
-                  className="w-full h-11 bg-gradient-to-r from-primary to-purple-600 hover:from-primary/90 hover:to-purple-500 text-white font-semibold shadow-md shadow-primary/15 hover:shadow-lg hover:shadow-primary/20 transition-all duration-200 group"
+                  className="w-full h-11 bg-white text-black hover:bg-white/90 font-semibold transition-colors group"
                   onClick={() => setMode('create')}
                 >
                   <Plus className="h-4 w-4 mr-2 group-hover:rotate-90 transition-transform duration-200" />
@@ -264,16 +227,16 @@ export function SessionDialog() {
                 <Button
                   size="lg"
                   variant="outline"
-                  className="w-full h-11 border-border/35 bg-secondary/15 hover:bg-secondary/40 hover:border-primary/20 font-semibold transition-all"
+                  className="w-full h-11 border-white/10 bg-white/5 hover:bg-white/10 text-white/80 font-medium transition-colors"
                   onClick={() => setMode('join')}
                 >
-                  <Hash className="h-4 w-4 mr-2 text-muted-foreground/70" />
+                  <Terminal className="h-4 w-4 mr-2 text-white/40" />
                   Join With Code
                 </Button>
 
                 <button
                   onClick={handleLogout}
-                  className="w-full flex items-center justify-center gap-1.5 text-[11px] text-muted-foreground/40 hover:text-muted-foreground/70 transition-colors py-1 font-medium"
+                  className="w-full flex items-center justify-center gap-1.5 text-[11px] text-white/30 hover:text-white/50 transition-colors py-1 font-medium"
                 >
                   <LogOut className="h-3 w-3" />
                   Sign out
@@ -285,12 +248,12 @@ export function SessionDialog() {
             {mode === 'create' && (
               <form onSubmit={handleCreate} className="space-y-5">
                 <div>
-                  <h2 className="text-lg font-bold mb-0.5">New Session</h2>
-                  <p className="text-[13px] text-muted-foreground/70">Start a collaborative coding session</p>
+                  <h2 className="text-lg font-bold mb-0.5 text-white">New Session</h2>
+                  <p className="text-[13px] text-white/40">Start a collaborative coding session</p>
                 </div>
 
                 <div className="space-y-1.5">
-                  <Label htmlFor="sessionName" className="text-sm font-medium text-foreground/80">Session Name</Label>
+                  <Label htmlFor="sessionName" className="text-sm font-medium text-white/80">Session Name</Label>
                   <Input
                     id="sessionName"
                     placeholder="e.g. Team Sprint, Interview, Study Group…"
@@ -298,9 +261,9 @@ export function SessionDialog() {
                     onChange={(e) => setSessionName(e.target.value)}
                     required
                     autoFocus
-                    className="h-11 bg-secondary/30 border-border/40 focus:border-primary/60 focus:ring-0 transition-all"
+                    className="h-11 bg-white/5 border-white/10 text-white placeholder:text-white/30 focus:border-white/20 focus:ring-0"
                   />
-                  <p className="text-[11px] text-muted-foreground/50">Give it a descriptive name</p>
+                  <p className="text-[11px] text-white/30">Give it a descriptive name</p>
                 </div>
 
                 {displayError && (
@@ -311,13 +274,13 @@ export function SessionDialog() {
 
                 <Button
                   type="submit"
-                  className="w-full h-11 bg-gradient-to-r from-primary to-purple-600 hover:from-primary/90 hover:to-purple-500 font-semibold shadow-md shadow-primary/15 transition-all"
+                  className="w-full h-11 bg-white text-black hover:bg-white/90 font-semibold transition-colors"
                   disabled={isConnecting}
                 >
                   {isConnecting ? (
                     <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Creating…</>
                   ) : (
-                    <><Sparkles className="mr-2 h-4 w-4" /> Create Session</>
+                    <><Plus className="mr-2 h-4 w-4" /> Create Session</>
                   )}
                 </Button>
               </form>
@@ -332,7 +295,7 @@ export function SessionDialog() {
                 </div>
 
                 <div className="space-y-1.5">
-                  <Label htmlFor="sessionId" className="text-sm font-medium text-foreground/80">Session Code</Label>
+                  <Label htmlFor="sessionId" className="text-sm font-medium text-white/80">Session Code</Label>
                   <Input
                     id="sessionId"
                     placeholder="ABC12345"
@@ -341,20 +304,20 @@ export function SessionDialog() {
                     required
                     autoFocus
                     maxLength={12}
-                    className="h-12 bg-secondary/30 border-border/40 focus:border-primary/60 focus:ring-0 font-mono tracking-[0.25em] text-center text-lg uppercase transition-all"
+                    className="h-12 bg-white/5 border-white/10 text-white placeholder:text-white/30 focus:border-white/20 focus:ring-0 font-mono tracking-[0.25em] text-center text-lg uppercase"
                   />
-                  <p className="text-[11px] text-muted-foreground/50 text-center">8-character code from the session host</p>
+                  <p className="text-[11px] text-white/30 text-center">8-character code from the session host</p>
                 </div>
 
                 {displayError && (
-                  <div className="p-3 rounded-lg bg-destructive/8 border border-destructive/20 text-destructive text-sm">
+                  <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm">
                     {displayError}
                   </div>
                 )}
 
                 <Button
                   type="submit"
-                  className="w-full h-11 bg-accent hover:bg-accent/90 text-accent-foreground font-semibold transition-all"
+                  className="w-full h-11 bg-white text-black hover:bg-white/90 font-semibold transition-colors"
                   disabled={isConnecting}
                 >
                   {isConnecting ? (

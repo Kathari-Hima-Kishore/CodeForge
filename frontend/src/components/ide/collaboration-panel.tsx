@@ -12,7 +12,8 @@ export function CollaborationPanel({ isCollapsed = false, onCollapse }: { isColl
 
   if (isCollapsed) {
     return (
-      <aside className="flex-shrink-0 border-r border-border/50 bg-secondary/10 flex flex-col items-center py-4 gap-4 transition-all duration-300 h-full w-full">
+      <aside className="flex-shrink-0 border-r border-white/5 bg-black/20 flex flex-col items-center py-4 gap-4 transition-all duration-300 h-full w-full relative">
+        <div className="absolute inset-y-0 left-0 w-px bg-gradient-to-b from-white/10 via-white/5 to-transparent" />
         <Button
           variant="ghost"
           size="icon"
@@ -46,7 +47,8 @@ export function CollaborationPanel({ isCollapsed = false, onCollapse }: { isColl
   }
 
   return (
-    <aside className="border-r border-border/50 bg-secondary/10 flex flex-col transition-all duration-300 h-full w-full">
+    <aside className="border-r border-white/5 bg-black/20 flex flex-col transition-all duration-300 h-full w-full relative">
+      <div className="absolute inset-y-0 left-0 w-px bg-gradient-to-b from-white/10 via-white/5 to-transparent" />
       <div className="flex items-center justify-between p-2 border-b border-border/50">
         <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider pl-2">Collaboration</span>
         <Button

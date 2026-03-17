@@ -77,21 +77,22 @@ export function BottomPanel() {
   };
 
   return (
-    <div className="h-full border-t border-border/40 flex flex-col bg-[#13141f]">
+    <div className="h-full border-t border-white/5 flex flex-col bg-black/30 relative overflow-hidden">
+      <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent" />
       <Tabs defaultValue="output" className="flex-1 flex flex-col min-h-0">
 
         {/* Tab bar */}
-        <div className="flex items-center px-2 border-b border-border/30 h-9 bg-[#0f1019]/70 shrink-0">
+        <div className="flex items-center px-2 border-b border-white/5 h-9 bg-black/20 shrink-0">
           <TabsList className="bg-transparent h-9 gap-0 p-0">
             <TabsTrigger
               value="output"
-              className="relative gap-1.5 text-[11px] font-medium h-9 rounded-none border-b-2 border-transparent data-[state=active]:border-blue-500/80 data-[state=active]:text-foreground data-[state=active]:bg-transparent text-muted-foreground/60 px-3.5 transition-colors"
+              className="relative gap-1.5 text-[11px] font-medium h-9 rounded-none border-b-2 border-transparent data-[state=active]:border-white/60 data-[state=active]:text-foreground data-[state=active]:bg-transparent text-white/50 px-3.5 transition-colors"
             >
               <Play className="h-3 w-3" />
               Output
-              {isExecuting && <Loader2 className="h-2.5 w-2.5 animate-spin text-blue-400" />}
+              {isExecuting && <Loader2 className="h-2.5 w-2.5 animate-spin text-white/60" />}
               {!isExecuting && output.length > 0 && (
-                <span className="h-4 min-w-4 rounded-full bg-blue-500/20 text-blue-400 text-[9px] font-bold flex items-center justify-center px-1 tabular-nums">
+                <span className="h-4 min-w-4 rounded-full bg-white/10 text-white/60 text-[9px] font-medium flex items-center justify-center px-1 tabular-nums">
                   {output.length}
                 </span>
               )}

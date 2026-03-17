@@ -4,8 +4,15 @@ import { Toaster } from "@/components/ui/toaster"
 import { Providers } from "@/components/providers"
 
 export const metadata: Metadata = {
-  title: 'CodeForge',
-  description: 'Real-time Collaborative Code Editor',
+  title: 'CodeForge - Real-time Collaborative IDE',
+  description: 'A powerful browser-based IDE for real-time collaborative coding. Code together with your team in any programming language.',
+  keywords: ['IDE', 'code editor', 'collaboration', 'programming', 'developer tools'],
+  authors: [{ name: 'CodeForge Team' }],
+  openGraph: {
+    title: 'CodeForge - Real-time Collaborative IDE',
+    description: 'Code together with your team in any programming language',
+    type: 'website',
+  },
 };
 
 export default function RootLayout({
@@ -16,6 +23,7 @@ export default function RootLayout({
   return (
     <html lang="en" className="dark">
       <head>
+        <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>" />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap" rel="stylesheet" />

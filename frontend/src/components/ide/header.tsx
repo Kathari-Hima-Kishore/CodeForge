@@ -357,24 +357,26 @@ export function IdeHeader() {
 
   return (
     <>
-      <header className="flex h-[48px] items-center gap-3 border-b border-[#1a1b2e] bg-[#0a0b14]/95 backdrop-blur-md px-4 shrink-0 z-10">
+      <header className="flex h-[52px] items-center gap-3 border-b border-white/5 glass-nav px-4 shrink-0 z-10 relative">
         {/* Left: Logo + session info */}
-        <div className="flex items-center gap-3 flex-1 min-w-0">
+              <div className="flex items-center gap-4 flex-1 min-w-0">
           <Logo />
 
           {session && (
             <>
-              <div className="w-px h-5 bg-[#1a1b2e]" />
-              <div className="flex items-center gap-2 min-w-0">
-                <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
-                <span className="text-[13px] font-semibold text-foreground/90 truncate max-w-[160px]">
+              <div className="w-px h-6 bg-white/10" />
+                <div className="flex items-center gap-3 min-w-0">
+                <div className="relative shrink-0">
+                  <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 ring-2 ring-emerald-400/40" />
+                </div>
+                <span className="text-[14px] font-semibold text-white truncate max-w-[160px] tracking-wide">
                   {session.name}
                 </span>
-                <span className="text-[10px] bg-primary/10 text-primary px-2 py-0.5 rounded-full font-bold capitalize border border-primary/15 tracking-wide shrink-0">
+                <span className="text-[10px] px-2.5 py-0.5 rounded-full font-semibold capitalize bg-white/10 text-white/80 shrink-0">
                   {session.role.replace('-', ' ')}
                 </span>
-                <span className="text-[11px] text-muted-foreground/50 flex items-center gap-1 bg-[#1a1b2e] px-1.5 py-0.5 rounded-full border border-[#252640] shrink-0">
-                  <Users className="h-2.5 w-2.5" />
+                <span className="text-[11px] text-white/50 flex items-center gap-1.5 px-2 py-0.5 rounded-full shrink-0 font-medium">
+                  <Users className="h-3.5 w-3.5" />
                   {participantCount}
                 </span>
               </div>
@@ -389,7 +391,7 @@ export function IdeHeader() {
               <Button
                 variant="outline"
                 size="sm"
-                className="flex items-center gap-1.5 h-7 px-3 text-[12px] border-primary/20 bg-primary/8 hover:bg-primary/15 text-primary font-medium"
+                className="flex items-center gap-1.5 h-8 px-3.5 text-[12px] border-white/10 bg-white/5 hover:bg-white/10 text-white/80 font-medium transition-colors"
                 onClick={() => setShareOpen(true)}
               >
                 <Share2 className="h-3.5 w-3.5" />
@@ -401,7 +403,7 @@ export function IdeHeader() {
                   <Button
                     variant="outline"
                     size="sm"
-                    className="flex items-center gap-1.5 h-7 px-3 text-[12px] border-[#252640] bg-[#1a1b2e]/50 hover:bg-[#1a1b2e] text-muted-foreground hover:text-foreground font-medium"
+                    className="flex items-center gap-1.5 h-8 px-3 text-[12px] border-[#252640]/70 bg-[#1a1b2e]/40 hover:bg-[#1a1b2e]/70 hover:border-[#252640] text-muted-foreground hover:text-foreground font-medium transition-all"
                   >
                     <Download className="h-3.5 w-3.5" />
                     Export
@@ -440,10 +442,10 @@ export function IdeHeader() {
 
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon" className="rounded-full h-7 w-7">
-                <Avatar className="h-7 w-7">
+              <Button variant="ghost" size="icon" className="rounded-full h-8 w-8 hover:bg-white/10 transition-colors">
+                <Avatar className="h-8 w-8 ring-1 ring-white/10">
                   <AvatarImage src={user?.photoURL || undefined} alt="User Avatar" />
-                  <AvatarFallback className="bg-gradient-to-br from-primary to-purple-600 text-white text-[11px] font-bold">
+                  <AvatarFallback className="bg-white/10 text-white text-[11px] font-medium">
                     {user?.displayName?.charAt(0) || user?.email?.charAt(0) || 'U'}
                   </AvatarFallback>
                 </Avatar>

@@ -21,4 +21,5 @@ if ($LASTEXITCODE -ne 0) {
 
 Write-Host "🚀 Backend is ready on port $port. Starting frontend..."
 cd frontend
-npm run dev
+npm run dev:no-open
+exit $LASTEXITCODE

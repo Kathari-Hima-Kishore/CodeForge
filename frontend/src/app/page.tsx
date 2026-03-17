@@ -5,23 +5,21 @@ import { useSession } from "@/contexts/session-context";
 import { AuthPage } from "@/components/auth/auth-page";
 import { SessionDialog } from "@/components/session/session-dialog";
 import { MainLayout } from "@/components/ide/main-layout";
-import { Loader2, Terminal } from "lucide-react";
+import { Loader2, CodeXml } from "lucide-react";
 
 function FullScreenLoader({ message }: { message: string }) {
   return (
-    <div className="flex items-center justify-center min-h-screen bg-background">
-      <div className="absolute inset-0 bg-grid-pattern opacity-[0.03]" />
-      <div className="absolute top-1/3 left-1/2 -translate-x-1/2 w-96 h-96 bg-primary/5 rounded-full blur-3xl" />
-      <div className="relative z-10 flex flex-col items-center gap-5">
-        <div className="relative">
-          <div className="absolute inset-0 bg-primary/20 blur-xl rounded-2xl" />
-          <div className="relative bg-gradient-to-br from-primary to-purple-600 p-3.5 rounded-2xl shadow-xl shadow-primary/20">
-            <Terminal className="h-8 w-8 text-white" />
-          </div>
+    <div className="flex items-center justify-center min-h-screen bg-[#0a0a0f]">
+      <div className="flex flex-col items-center gap-8">
+        <div className="w-20 h-20 rounded-2xl bg-white/10 border border-white/10 flex items-center justify-center">
+          <CodeXml className="h-10 w-10 text-white/80" />
         </div>
-        <div className="flex flex-col items-center gap-2">
-          <Loader2 className="h-5 w-5 animate-spin text-primary" />
-          <p className="text-sm text-muted-foreground">{message}</p>
+        
+        <div className="flex flex-col items-center gap-4">
+          <div className="flex items-center gap-2">
+            <Loader2 className="h-4 w-4 animate-spin text-white/40" />
+            <p className="text-sm text-white/40 font-medium">{message}</p>
+          </div>
         </div>
       </div>
     </div>

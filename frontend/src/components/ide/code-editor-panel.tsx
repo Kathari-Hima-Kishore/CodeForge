@@ -97,11 +97,11 @@ export function CodeEditorPanel() {
   };
 
   return (
-    <div className="h-full flex flex-col min-h-0 bg-[#0d0e17] text-gray-200">
+    <div className="h-full flex flex-col min-h-0 bg-black text-gray-200">
 
       {/* File tabs */}
       {localOpenFileIds.length > 0 && (
-        <div className="flex items-center h-9 px-1 border-b border-[#1a1b2e] overflow-x-auto bg-[#0a0b14] scrollbar-thin shrink-0">
+        <div className="flex items-center h-9 px-1 border-b border-white/5 overflow-x-auto bg-black scrollbar-thin shrink-0">
           {localOpenFileIds.map(fileId => {
             const file = files.find(f => f.id === fileId);
             if (!file || file.isFolder) return null;
@@ -110,15 +110,15 @@ export function CodeEditorPanel() {
             return (
               <div
                 key={file.id}
-                className={`group flex items-center gap-1.5 px-3 h-full text-[11px] border-r border-[#1a1b2e] cursor-pointer flex-shrink-0 relative select-none transition-colors duration-100 ${
+                className={`group flex items-center gap-1.5 px-3 h-full text-[11px] border-r border-white/5 cursor-pointer flex-shrink-0 relative select-none transition-colors ${
                   isActive
-                    ? 'bg-[#0d0e17] text-white/90'
-                    : 'bg-[#0a0b14] text-gray-500 hover:text-gray-300 hover:bg-[#0c0d1a]'
+                    ? 'bg-black text-white/90'
+                    : 'bg-black text-white/40 hover:text-white/70 hover:bg-white/5'
                 }`}
                 onClick={() => setCurrentFileId(file.id)}
               >
                 {isActive && (
-                  <div className="absolute bottom-0 left-0 right-0 h-[2px] bg-blue-500/70 rounded-t" />
+                  <div className="absolute bottom-0 left-0 right-0 h-[2px] bg-white/60 rounded-t" />
                 )}
                 <div className={`w-1.5 h-1.5 rounded-full ${fileLang.dot} opacity-80 flex-shrink-0`} />
                 <span className="max-w-[120px] truncate font-medium">{file.name}</span>
