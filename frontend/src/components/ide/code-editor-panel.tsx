@@ -16,15 +16,14 @@ interface LangConfig {
 }
 
 const LANG_CONFIG: LangConfig[] = [
-  { id: 'javascript', name: 'JS',     monacoId: 'javascript', color: 'text-yellow-400',  dot: 'bg-yellow-400' },
-  { id: 'typescript', name: 'TS',     monacoId: 'typescript', color: 'text-blue-400',    dot: 'bg-blue-400' },
-  { id: 'python',     name: 'Python', monacoId: 'python',     color: 'text-emerald-400', dot: 'bg-emerald-400' },
-  { id: 'java',       name: 'Java',   monacoId: 'java',       color: 'text-orange-400',  dot: 'bg-orange-400' },
-  { id: 'cpp',        name: 'C++',    monacoId: 'cpp',        color: 'text-sky-300',     dot: 'bg-sky-300' },
-  { id: 'c',          name: 'C',      monacoId: 'c',          color: 'text-slate-400',   dot: 'bg-slate-400' },
-  { id: 'csharp',     name: 'C#',     monacoId: 'csharp',     color: 'text-purple-400',  dot: 'bg-purple-400' },
-  { id: 'html',       name: 'HTML',   monacoId: 'html',       color: 'text-red-400',     dot: 'bg-red-400' },
-  { id: 'css',        name: 'CSS',    monacoId: 'css',        color: 'text-pink-400',    dot: 'bg-pink-400' },
+  { id: 'html',       name: 'HTML',       monacoId: 'html',       color: 'text-red-400',     dot: 'bg-red-400' },
+  { id: 'css',        name: 'CSS',        monacoId: 'css',        color: 'text-pink-400',    dot: 'bg-pink-400' },
+  { id: 'javascript', name: 'JS',         monacoId: 'javascript', color: 'text-yellow-400',  dot: 'bg-yellow-400' },
+  { id: 'typescript', name: 'TS',         monacoId: 'typescript', color: 'text-blue-400',    dot: 'bg-blue-400' },
+  { id: 'python',     name: 'Python',     monacoId: 'python',     color: 'text-emerald-400', dot: 'bg-emerald-400' },
+  { id: 'java',       name: 'Java',       monacoId: 'java',       color: 'text-orange-400',  dot: 'bg-orange-400' },
+  { id: 'c',          name: 'C',          monacoId: 'c',          color: 'text-slate-400',   dot: 'bg-slate-400' },
+  { id: 'cpp',        name: 'C++',        monacoId: 'cpp',        color: 'text-sky-300',     dot: 'bg-sky-300' },
 ];
 
 function getLang(language: string): LangConfig {
@@ -47,14 +46,23 @@ export function CodeEditorPanel() {
   const [localOpenFileIds, setLocalOpenFileIds] = useState<string[]>([]);
   const [htmlPreviewOpen, setHtmlPreviewOpen] = useState(false);
 
+  // Clean up open file list when files are deleted
   useEffect(() => {
     const fileIds = files.filter(f => !f.isFolder).map(f => f.id);
-    if (localOpenFileIds.length === 0 && fileIds.length > 0) {
-      setLocalOpenFileIds(fileIds);
-    } else {
-      setLocalOpenFileIds(prev => prev.filter(id => fileIds.includes(id)));
-    }
+    setLocalOpenFileIds(prev => prev.filter(id => fileIds.includes(id)));
   }, [files]);
+
+  // Auto-open file when clicked in explorer (if not already open)
+  useEffect(() => {
+    if (currentFileId) {
+      setLocalOpenFileIds(prev => {
+        if (!prev.includes(currentFileId)) {
+          return [...prev, currentFileId];
+        }
+        return prev;
+      });
+    }
+  }, [currentFileId]);
 
   const currentFile = files.find(f => f.id === currentFileId);
   const code = currentFile?.content || '';

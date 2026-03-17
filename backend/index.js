@@ -391,9 +391,13 @@ async function notifyFrontend(event, data) {
 // =============================================================================
 // Session Storage
 // =============================================================================
+// NOTE: In-memory sessions are ONLY for tracking active Socket.IO connections.
+// ALL persistent data (files, messages, participants, etc.) is stored in Firestore.
+// The in-memory cache is ephemeral and can be rebuilt from Firestore on reconnect.
+// SOURCE OF TRUTH: Firestore (frontend writes directly, backend syncs on join/leave)
 
-const sessions = {};
-const connectedUsers = {};
+const sessions = {}; // Active session connections (ephemeral)
+const connectedUsers = {}; // Socket ID → User mapping
 
 class SessionData {
   constructor(sessionId, hostUid, hostName, settings) {
@@ -403,10 +407,10 @@ class SessionData {
     this.host_sid = null;
     this.created_at = new Date().toISOString();
     this.created_at_ms = Date.now();
-    this.participants = {};
-    this.files = {};
-    this.messages = [];
+    this.participants = {}; // Only for tracking active socket connections
     this.is_active = true;
+    // NOTE: files and messages are NOT stored here - they live ONLY in Firestore
+    // Frontend writes directly to Firestore, backend only tracks connections
   }
 
   addParticipant(userUid, name, sid, role = "editor") {
@@ -414,7 +418,7 @@ class SessionData {
       uid: userUid,
       name: name,
       role: role,
-      sid: sid,
+      sid: sid, // Socket ID for routing messages
       color: generateColor(),
       joined_at: new Date().toISOString()
     };
@@ -447,7 +451,6 @@ class SessionData {
       hostId: this.host_uid,
       hostName: this.participants[this.host_uid]?.name || "Host",
       participants: this.participants,
-      files: Object.values(this.files),
       isActive: this.is_active
     };
   }
@@ -456,26 +459,42 @@ class SessionData {
 // =============================================================================
 // Firestore Persistence
 // =============================================================================
+// NOTE: This function syncs the ephemeral in-memory session state to Firestore.
+// Called on: session create, join, leave, and participant changes.
+// Frontend writes files/messages directly to Firestore, so this mainly syncs participant state.
 
 // Save session to Firestore
 async function saveSessionToFirestore(session) {
   if (!db || !session) return;
 
   try {
-    const sessionData = {
-      sessionId: session.id,
-      name: session.name,
-      hostId: session.host_uid,
-      hostName: session.participants[session.host_uid]?.name || "Host",
-      participants: session.participants,
-      files: Object.values(session.files),
-      messages: session.messages,
-      isActive: session.is_active,
-      createdAt: session.created_at_ms || new Date(session.created_at).getTime()
-    };
-    
-    await db.collection("sessions").doc(session.id).set(sessionData);
-    console.log(`💾 Session ${session.id} saved to Firestore`);
+    const sessionRef = db.collection("sessions").doc(session.id);
+    const sessionDoc = await sessionRef.get();
+
+    if (sessionDoc.exists()) {
+      // Session exists - only update participant connection state
+      await sessionRef.update({
+        participants: session.participants,
+        isActive: session.is_active
+      });
+      console.log(`💾 Session ${session.id} participants synced to Firestore`);
+    } else {
+      // New session - create with initial structure
+      const sessionData = {
+        sessionId: session.id,
+        name: session.name,
+        hostId: session.host_uid,
+        hostName: session.participants[session.host_uid]?.name || "Host",
+        participants: session.participants,
+        files: [], // Empty - frontend will populate
+        messages: [], // Empty - frontend will populate
+        isActive: session.is_active,
+        createdAt: session.created_at_ms || new Date(session.created_at).getTime()
+      };
+
+      await sessionRef.set(sessionData);
+      console.log(`💾 Session ${session.id} created in Firestore`);
+    }
   } catch (error) {
     console.error(`❌ Failed to save session ${session.id} to Firestore:`, error);
   }
@@ -585,13 +604,7 @@ io.on('connection', (socket) => {
                 { name: dataFs.name }
               );
 
-              if (dataFs.files) {
-                dataFs.files.forEach(f => {
-                  const fId = f.id || generateSessionId(12);
-                  session.files[fId] = f;
-                });
-              }
-
+              // Restore participant connection state (but not socket IDs - those are rebuilt on reconnect)
               if (dataFs.participants) {
                 for (const uid in dataFs.participants) {
                   const p = dataFs.participants[uid];
@@ -599,7 +612,7 @@ io.on('connection', (socket) => {
                     uid: p.uid,
                     name: p.name,
                     role: p.role,
-                    sid: null,
+                    sid: null, // Socket ID will be set on reconnect
                     color: p.color || generateColor(),
                     joined_at: p.joinedAt || new Date().toISOString()
                   };
@@ -607,7 +620,7 @@ io.on('connection', (socket) => {
               }
 
               sessions[sessionId] = session;
-              console.log(`🔄 Session ${sessionId} resurrected from Firestore`);
+              console.log(`🔄 Session ${sessionId} resurrected from Firestore (connection tracking only)`);
             } else {
               return callback ? callback({ error: "Session is inactive" }) : null;
             }
@@ -843,37 +856,8 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('cursor_update', (data) => {
-    const userData = connectedUsers[sid];
-    if (!userData || !userData.session_id) return;
-
-    const sessionId = userData.session_id;
-    socket.to(sessionId).emit("cursor_update", {
-      user_uid: userData.uid,
-      name: userData.name,
-      cursor: data.cursor,
-      selection: data.selection
-    });
-  });
-
-  socket.on('file_update', async (data) => {
-    const userData = connectedUsers[sid];
-    if (!userData || !userData.session_id) return;
-
-    const sessionId = userData.session_id;
-    const session = sessions[sessionId];
-    if (session && data.files) {
-      // Update session files
-      session.files = {};
-      data.files.forEach(f => {
-        const fId = f.id || generateSessionId(12);
-        session.files[fId] = f;
-      });
-      // Save to Firestore
-      await saveSessionToFirestore(session);
-    }
-    socket.to(sessionId).emit("file_update", data);
-  });
+  // NOTE: File updates, cursor positions, and messages are handled directly via Firestore
+  // Frontend uses onSnapshot listeners for real-time sync - no Socket.IO needed for these
 
   // Terminal: run a command with streaming output (no timeout)
   let terminalProcess = null;
@@ -1092,13 +1076,14 @@ app.post('/api/terminal', verifyFirebaseToken, async (req, res) => {
 app.get('/api/languages', (req, res) => {
   res.json({
     languages: [
-      { id: "python", name: "Python" },
+      { id: "html", name: "HTML" },
+      { id: "css", name: "CSS" },
       { id: "javascript", name: "JavaScript" },
       { id: "typescript", name: "TypeScript" },
+      { id: "python", name: "Python" },
       { id: "java", name: "Java" },
-      { id: "cpp", name: "C++" },
       { id: "c", name: "C" },
-      { id: "csharp", name: "C#" }
+      { id: "cpp", name: "C++" }
     ]
   });
 });
@@ -1351,11 +1336,32 @@ app.post('/api/build-container', async (req, res) => {
   const sanitizedName = (sessionName || 'project').toLowerCase().replace(/[^a-z0-9]/g, '-');
   const hubRepoName = dockerHubRepo || sanitizedName;
   const timestamp = Date.now();
-  const randomSuffix = Math.random().toString(36).substring(2, 8);
+  // Ensure random suffix is always 6 characters
+  const randomSuffix = Math.random().toString(36).substring(2, 8).padEnd(6, '0');
+  
+  // Add small delay to ensure different timestamps in Docker
   const imageName = `codeforge/${sanitizedName}:${timestamp}-${randomSuffix}`;
   const buildDir = path.join(os.tmpdir(), `codeforge-build-${timestamp}`);
+  const tarFileName = `${sanitizedName}-${timestamp}.tar`;  // Windows-safe filename (no colons)
+  const tarFileNameSafe = `${imageName.replace(/[\/\\:]/g, '-')}.tar`;  // Full safe name with suffix
 
   const isAutoImport = action === 'autoimport';
+
+  console.log(`[Docker Build] ============================================`);
+  console.log(`[Docker Build] timestamp: ${timestamp}`);
+  console.log(`[Docker Build] randomSuffix: ${randomSuffix}`);
+  console.log(`[Docker Build] imageName: ${imageName}`);
+  console.log(`[Docker Build] tarFileNameSafe: ${tarFileNameSafe}`);
+  console.log(`[Docker Build] action: ${action}`);
+  console.log(`[Docker Build] ============================================`);
+
+  // Remove any existing image with same tag to ensure fresh build
+  try {
+    execSync(`${dockerCmd} rmi ${imageName}`, { stdio: 'ignore' });
+    console.log(`[Docker Build] Removed existing image (if any)`);
+  } catch(e) {
+    // Ignore - image might not exist
+  }
 
   console.log(`[Docker Build] Starting build for ${imageName} with action ${action}`);
   console.log(`[Docker Build] Files: ${Object.keys(files).join(', ')}`);
@@ -1654,6 +1660,8 @@ CMD ["tail", "-f", "/dev/null"]`;
             reject(new Error(`Docker build failed with exit code ${code}`));
           } else {
             console.log(`[Docker Build] Build succeeded`);
+            console.log(`[Docker Build] Verifying image ${imageName} exists...`);
+            // Image ID is retrieved after build completes (see below)
             resolve();
           }
         });
@@ -1669,6 +1677,18 @@ CMD ["tail", "-f", "/dev/null"]`;
       });
     }
 
+    // Get image ID after build
+    // Add delay to ensure different timestamps in Docker Desktop
+    await new Promise(r => setTimeout(r, 1500));
+    
+    let imageId = null;
+    try {
+      imageId = execSync(`${dockerCmd} images -q ${imageName}`, { encoding: 'utf8' }).trim();
+      console.log(`[Docker Build] Image ID: ${imageId}`);
+    } catch(e) {
+      console.log(`[Docker Build] WARNING: Could not get image ID: ${e.message}`);
+    }
+
     // Auto-import is satisfied by 'docker build' itself (local engine)
     if (action === 'autoimport') {
       fs.rmSync(buildDir, { recursive: true, force: true });
@@ -1676,6 +1696,7 @@ CMD ["tail", "-f", "/dev/null"]`;
         success: true, 
         message: 'Container image built and imported to Docker Desktop!', 
         imageName: imageName,
+        imageId: imageId,
         port: detectedPort,
         accessUrl: `http://localhost:${detectedPort}`
       });
@@ -1841,7 +1862,7 @@ async function createDockerHubRepository(username, password, repoName, token) {
               return res.status(500).json({ error: 'Failed to push to Docker Hub', details: pushOutput });
             }
 
-            res.json({ success: true, message: `Image pushed to Docker Hub: ${hubImageName}`, imageName: hubImageName });
+            res.json({ success: true, message: `Image pushed to Docker Hub: ${hubImageName}`, imageName: hubImageName, imageId: imageId });
           });
         });
       });
@@ -1868,18 +1889,28 @@ async function createDockerHubRepository(username, password, repoName, token) {
       return;
     }
 
-    const saveProcess = spawn(dockerCmd, ['save', '-o', `${imageName.replace('/', '-')}.tar`, imageName], {
-      shell: true
+    const saveProcess = spawn(dockerCmd, ["save", "-o", tarFileNameSafe, imageName]);
+
+    let saveError = '';
+    saveProcess.stderr.on('data', (data) => {
+      saveError += data;
     });
 
     saveProcess.on('close', async (saveCode) => {
-      const tarPath = path.join(process.cwd(), `${imageName.replace('/', '-')}.tar`);
+      const tarPath = path.join(process.cwd(), tarFileNameSafe);
+
+      console.log(`[Docker Save] tarPath: ${tarPath}`);
+      console.log(`[Docker Save] exists: ${fs.existsSync(tarPath)}`);
+      console.log(`[Docker Save] exit code: ${saveCode}`);
 
       if (saveCode !== 0 || !fs.existsSync(tarPath)) {
+        console.log(`[Docker Save] Failed with code ${saveCode}, error: ${saveError}`);
         exec(`${dockerCmd} rmi ${imageName}`, () => { });
         fs.rmSync(buildDir, { recursive: true, force: true });
-        return res.status(500).json({ error: 'Failed to save Docker image' });
+        return res.status(500).json({ error: 'Failed to save Docker image', details: saveError || `Exit code: ${saveCode}` });
       }
+
+      console.log(`[Docker Save] Success!`);
 
       if (isAutoImport) {
         exec(`${dockerCmd} load -i "${tarPath}"`, (loadErr, loadStdout, loadStderr) => {
@@ -1896,7 +1927,6 @@ async function createDockerHubRepository(username, password, repoName, token) {
         return;
       }
 
-      const tarFileName = `${sanitizedName}-${timestamp}.tar`;
       const tempDir = path.join(os.tmpdir(), 'codeforge-downloads');
       if (!fs.existsSync(tempDir)) {
         fs.mkdirSync(tempDir, { recursive: true });
@@ -1908,15 +1938,16 @@ async function createDockerHubRepository(username, password, repoName, token) {
       fs.unlinkSync(tarPath);
       fs.rmSync(buildDir, { recursive: true, force: true });
 
-      const shortImageName = `codeforge/${sanitizedName}:${timestamp}`;
+      // Use the full imageName (includes timestamp + randomSuffix for uniqueness)
       res.json({
         success: true,
         downloadUrl: `/api/download-temp/${tarFileName}`,
         fileName: tarFileName,
-        imageName: shortImageName,
+        imageName: imageName,  // Full unique name with timestamp + suffix
+        imageId: imageId,      // Docker image ID
         port: detectedPort,
         accessUrl: `http://localhost:${detectedPort}`,
-        instructions: `To run: docker run -p ${detectedPort}:${detectedPort} ${shortImageName}`
+        instructions: `To run: docker run -p ${detectedPort}:${detectedPort} ${imageName}`
       });
     });
   } catch (error) {

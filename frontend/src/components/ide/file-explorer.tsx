@@ -16,15 +16,14 @@ import {
 } from "@/components/ui/dropdown-menu";
 
 const LANGUAGES = [
+  { id: 'html',       name: 'HTML',       ext: '.html', dot: 'bg-red-400',     textColor: 'text-red-400' },
+  { id: 'css',        name: 'CSS',        ext: '.css',  dot: 'bg-pink-400',    textColor: 'text-pink-400' },
   { id: 'javascript', name: 'JavaScript', ext: '.js',   dot: 'bg-yellow-400',  textColor: 'text-yellow-400' },
   { id: 'typescript', name: 'TypeScript', ext: '.ts',   dot: 'bg-blue-400',    textColor: 'text-blue-400' },
   { id: 'python',     name: 'Python',     ext: '.py',   dot: 'bg-emerald-400', textColor: 'text-emerald-400' },
   { id: 'java',       name: 'Java',       ext: '.java', dot: 'bg-orange-400',  textColor: 'text-orange-400' },
-  { id: 'cpp',        name: 'C++',        ext: '.cpp',  dot: 'bg-sky-300',     textColor: 'text-sky-300' },
   { id: 'c',          name: 'C',          ext: '.c',    dot: 'bg-slate-400',   textColor: 'text-slate-400' },
-  { id: 'csharp',     name: 'C#',         ext: '.cs',   dot: 'bg-purple-400',  textColor: 'text-purple-400' },
-  { id: 'html',       name: 'HTML',       ext: '.html', dot: 'bg-red-400',     textColor: 'text-red-400' },
-  { id: 'css',        name: 'CSS',        ext: '.css',  dot: 'bg-pink-400',    textColor: 'text-pink-400' },
+  { id: 'cpp',        name: 'C++',        ext: '.cpp',  dot: 'bg-sky-300',     textColor: 'text-sky-300' },
 ];
 
 function getLangConfig(language: string) {
@@ -86,8 +85,13 @@ export function FileExplorer({ isCollapsed = false, onCollapse }: { isCollapsed?
     if (file?.isFolder) {
       if (confirm('Delete this folder and all contents?')) deleteFolder(fileId);
     } else {
-      if (files.filter(f => !f.isFolder).length <= 1) return;
-      if (confirm('Delete this file?')) deleteFile(fileId);
+      const nonFolderFiles = files.filter(f => !f.isFolder);
+      if (nonFolderFiles.length === 0) return;
+      if (nonFolderFiles.length === 1 && confirm('This is the last file. Delete it anyway?')) {
+        deleteFile(fileId);
+      } else if (nonFolderFiles.length > 1) {
+        if (confirm('Delete this file?')) deleteFile(fileId);
+      }
     }
   };
 

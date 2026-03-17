@@ -1,5 +1,18 @@
 'use client';
 
+/**
+ * Session Context - Real-time Collaborative IDE State Management
+ *
+ * PERSISTENCE MODEL:
+ * - ALL session data (files, messages, participants) is stored ONLY in Firestore
+ * - NO local storage, session storage, or IndexedDB usage
+ * - Real-time sync via Firestore onSnapshot listeners
+ * - Socket.IO is used ONLY for: code execution streams, terminal I/O, and session join/leave events
+ * - React state (files, messages, etc.) is an in-memory cache synced from Firestore
+ *
+ * SOURCE OF TRUTH: Firestore `/sessions/{sessionId}` documents
+ */
+
 import React, { createContext, useContext, useState, useCallback, useEffect, ReactNode } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { BACKEND_URL, getDynamicBackendUrl, auth, db } from '@/lib/firebase';

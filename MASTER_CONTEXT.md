@@ -1,6 +1,6 @@
 # CodeForge - Master Context & Project Status
 
-**Last Updated**: 2026-03-13
+**Last Updated**: 2026-03-17
 **Project**: Real-time Collaborative Browser IDE
 **Status**: Development in Progress
 
@@ -28,7 +28,7 @@
 CodeForge is a real-time collaborative code editor with multi-language support and session management. Users can:
 - Create/join coding sessions
 - Edit files collaboratively with live cursors
-- Execute code in multiple languages (Python, JavaScript, TypeScript, Java, C++, C, C#)
+- Execute code in multiple languages (Python, JavaScript, TypeScript, Java, C++, C)
 - Chat with session participants
 - Lock files to prevent edit conflicts
 - Export to Docker containers
@@ -39,7 +39,7 @@ CodeForge is a real-time collaborative code editor with multi-language support a
 - 🎭 **Role-based Access** - Host, Co-Host, Editor, Viewer roles
 - 💬 **Live Chat** - Built-in messaging for session participants
 - 🔒 **File Locking** - Prevents edit conflicts with lock indicators
-- ▶️ **Multi-language Execution** - Python, JavaScript, TypeScript, Java, C++, C, C#
+- ▶️ **Multi-language Execution** - Python, JavaScript, TypeScript, Java, C++, C
 - 🖥️ **Terminal** - Full terminal with real-time streaming (no timeout)
 - 🐳 **Docker Export** - Build and push container images to Docker Hub
 - 🌐 **ngrok Tunneling** - Share sessions with remote users
@@ -122,6 +122,53 @@ Rules deployed via Firebase console on 2026-03-13. `firebase.json` also created 
 - **Fix 2**: Backend saves numeric `created_at_ms` timestamp; frontend handles both number and Timestamp
 - **Fix 3**: Disconnect handler now marks session `isActive: false` in Firestore when host leaves
 - **Files**: `backend/index.js`, `frontend/src/contexts/session-context.tsx`
+
+### ✅ Auth Page — Cyberpunk Command Center UI (2026-03-17)
+**Status**: COMPLETE
+**File**: `frontend/src/components/auth/auth-page.tsx`
+**CSS**: `frontend/src/app/globals.css`
+
+#### Layout Architecture
+- Strict **100vh non-scrolling** two-column grid (`lg:grid-cols-2`)
+- Left column: hero/headline section — fully centered (`items-center`, no left padding)
+- Right column: auth card — unchanged, functional/subordinate
+- **Horizontal bridge line** (`z-20`, 1px gradient) between CODEFORGE header and content grid
+- **Vertical column divider** (`absolute inset-y-0 left-1/2`, 1px gradient) separating columns
+- **Glowing intersection node** (7px circle, `box-shadow` glow) where lines meet at top
+
+#### Typography System (`textSizes` object — line ~163)
+- `lim` — raw CSS `clamp()` value (NOT a Tailwind class) used in `style={{ fontSize }}`
+  - ⚠️ Bug fixed: was `'text-[clamp(...)]'` (Tailwind class) passed to inline style → browser ignored it
+- `sys` / `sub` — Tailwind classes used in `className`, correct usage
+- "Build Without": `clamp(28px, 4vh, 48px)`, `text-white/30` — subordinate to LIMITS
+- All text centered; `lg:text-left` / `lg:justify-start` overrides removed
+
+#### CODEFORGE Brand (line ~634)
+- Reflective wave: `absolute inset-y-0 w-[45%]` span using `shimmerBtn` animation + `skewX(-18deg)`
+- Skew makes the shimmer stripe diagonal (italic light reflection) — text itself is NOT skewed
+
+#### LIMITS Pulse (line ~185)
+- `neonPulse` (`filter: drop-shadow`) removed — bleeds outside element via compositing, can't be clipped
+- Replaced with `limitsGlow` on the inner `aria-hidden absolute inset-0` span
+- `limitsGlow` animates `opacity` + `scale` — fully contained within the LIMITS bounding box
+- Glow gradient centered at `50% 50%`, blue (`rgba(65,105,225,...)`)
+
+#### globals.css Additions
+- **Autofill override**: `-webkit-box-shadow inset` trick forces dark background on browser credential fill
+- **`limitsGlow` keyframe**: `opacity 0.35→1.00`, `scale 1→1.06` — contained glow pulse
+- `shimmerBtn` keyframe (pre-existing): used by CODEFORGE wave and button hover
+
+#### Known Design Values
+| Element | Control |
+|---|---|
+| LIMITS font size | `textSizes.lim` — raw CSS clamp, line ~165 |
+| LIMITS glow intensity | `limitsGlow` keyframe opacity values in globals.css |
+| LIMITS glow spread | `blur-[40px]` on inner aria-hidden span, line ~198 |
+| CODEFORGE size | `text-[clamp(50px,4vh,40px)]` on brand span, line ~634 |
+| Image height cap | `max-h-[50vh]` on `<img>`, line ~250 |
+| Column divider opacity | gradient rgba values on vertical bridge div ~line 660 |
+
+---
 
 ### ✅ Full UI Redesign (2026-03-13)
 **Status**: COMPLETE
@@ -226,7 +273,7 @@ CodeForge/
 | `frontend/src/components/ide/file-explorer.tsx` | File tree with language colors | ~310 | ✅ Redesigned |
 | `frontend/src/components/ide/bottom-panel.tsx` | Output and terminal tabs | ~190 | ✅ Redesigned |
 | `frontend/src/components/ide/header.tsx` | Top navigation bar | ~200 | ✅ Redesigned |
-| `frontend/src/components/auth/auth-page.tsx` | Sign in / register page | ~300 | ✅ Redesigned |
+| `frontend/src/components/auth/auth-page.tsx` | Sign in / register page — Cyberpunk Command Center | ~660 | ✅ Redesigned v2 |
 | `frontend/src/components/session/session-dialog.tsx` | Session creation/join dialog | ~350 | ✅ Redesigned |
 | `firestore.rules` | Firebase security rules | 32 | ✅ Deployed |
 
@@ -395,15 +442,14 @@ firebase deploy
 - `file_update`, `cursor_update`, `chat_message`
 
 ### Supported Languages
-- Python (.py)
-- JavaScript (.js)
-- TypeScript (.ts)
-- Java (.java)
-- C++ (.cpp)
-- C (.c)
-- C# (.cs)
 - HTML (.html)
 - CSS (.css)
+- JavaScript (.js)
+- TypeScript (.ts)
+- Python (.py)
+- Java (.java)
+- C (.c)
+- C++ (.cpp)
 
 ### File Locking Rules
 - Auto-expire after 5 minutes of no write activity
@@ -413,6 +459,6 @@ firebase deploy
 
 ---
 
-**Document Version**: 2.0
-**Last Modified**: 2026-03-13
+**Document Version**: 2.1
+**Last Modified**: 2026-03-17
 **Maintainer**: CodeForge Development Team

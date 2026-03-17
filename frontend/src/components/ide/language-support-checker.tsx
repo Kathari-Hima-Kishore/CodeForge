@@ -227,14 +227,9 @@ export function LanguageSupportChecker() {
           <p className="text-[11px] text-muted-foreground">
             Restart the backend after installing tools.
           </p>
-          <div className="flex gap-2">
-            <Button variant="outline" size="sm" onClick={() => setOpen(false)}>
-              Dismiss
-            </Button>
-            <Button size="sm" onClick={runCheck} disabled={loading}>
-              {loading ? 'Checking…' : 'Check Again'}
-            </Button>
-          </div>
+          <Button variant="outline" size="sm" onClick={() => setOpen(false)}>
+            Dismiss
+          </Button>
         </div>
 
       </DialogContent>
