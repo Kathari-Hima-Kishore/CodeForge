@@ -5,34 +5,26 @@ import { useSession } from "@/contexts/session-context";
 import { AuthPage } from "@/components/auth/auth-page";
 import { SessionDialog } from "@/components/session/session-dialog";
 import { MainLayout } from "@/components/ide/main-layout";
-import { Loader2, CodeXml } from "lucide-react";
+import { VerifyEmailScreen } from "@/components/auth/verify-email";
+import { Loader2 } from "lucide-react";
 
-function FullScreenLoader({ message }: { message: string }) {
+function LoadingScreen({ message }: { message: string }) {
   return (
-    <div className="flex items-center justify-center min-h-screen bg-[#0a0a0f]">
-      <div className="flex flex-col items-center gap-8">
-        <div className="w-20 h-20 rounded-2xl bg-white/10 border border-white/10 flex items-center justify-center">
-          <CodeXml className="h-10 w-10 text-white/80" />
-        </div>
-        
-        <div className="flex flex-col items-center gap-4">
-          <div className="flex items-center gap-2">
-            <Loader2 className="h-4 w-4 animate-spin text-white/40" />
-            <p className="text-sm text-white/40 font-medium">{message}</p>
-          </div>
-        </div>
-      </div>
+    <div className="flex flex-col items-center justify-center min-h-screen bg-[#0C0C0E]">
+      <Loader2 className="w-5 h-5 text-amber-400 animate-spin mb-3" />
+      <p className="text-xs font-medium text-zinc-500 tracking-widest uppercase">{message}</p>
     </div>
   );
 }
 
 export default function HomePage() {
-  const { user, loading: authLoading } = useAuth();
+  const { user, loading: authLoading, isEmailVerified } = useAuth();
   const { session, isConnecting } = useSession();
 
-  if (authLoading) return <FullScreenLoader message="Authenticating..." />;
+  if (authLoading) return <LoadingScreen message="Authenticating" />;
   if (!user) return <AuthPage />;
-  if (isConnecting) return <FullScreenLoader message="Connecting to session..." />;
+  if (!isEmailVerified) return <VerifyEmailScreen />;
+  if (isConnecting) return <LoadingScreen message="Connecting to session" />;
   if (!session) return <SessionDialog />;
   return <MainLayout />;
 }

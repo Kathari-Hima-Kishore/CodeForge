@@ -65,6 +65,11 @@ const CONFIG = {
 let FIREBASE_INITIALIZED = false;
 let db = null;
 
+function getDb() {
+  ensureFirebaseInit();
+  return db;
+}
+
 function initFirebase() {
   const rootDir = path.resolve(__dirname, '..');
   let creds_path = path.join(__dirname, CONFIG.firebase_credentials_path);
@@ -90,13 +95,23 @@ function initFirebase() {
   }
 }
 
-initFirebase();
+// Lazy init — only called on first real Firebase access
+let _firebaseInitDone = false;
+
+function ensureFirebaseInit() {
+  if (_firebaseInitDone) return;
+  _firebaseInitDone = true;
+  initFirebase();
+}
+
+// initFirebase() removed from here — now lazy via ensureFirebaseInit()
 
 // =============================================================================
 // Authentication Middleware
 // =============================================================================
 
 async function verifyFirebaseToken(req, res, next) {
+  ensureFirebaseInit();
   if (!FIREBASE_INITIALIZED) return next();
 
   let idToken = null;
@@ -465,10 +480,10 @@ class SessionData {
 
 // Save session to Firestore
 async function saveSessionToFirestore(session) {
-  if (!db || !session) return;
+  if (!getDb() || !session) return;
 
   try {
-    const sessionRef = db.collection("sessions").doc(session.id);
+    const sessionRef = getDb().collection("sessions").doc(session.id);
     const sessionDoc = await sessionRef.get();
 
     const docExists = typeof sessionDoc?.exists === 'function' ? sessionDoc.exists() : false;
@@ -591,9 +606,9 @@ io.on('connection', (socket) => {
     sessionId = sessionId.toUpperCase().trim();
 
     if (!sessions[sessionId]) {
-      if (db) {
+      if (getDb()) {
         try {
-          const doc = await db.collection("sessions").doc(sessionId).get();
+          const doc = await getDb().collection("sessions").doc(sessionId).get();
           if (doc.exists) {
             const dataFs = doc.data();
             if (dataFs.isActive) {
@@ -984,7 +999,7 @@ app.get('/api/test-firestore', async (req, res) => {
   
   try {
     // Try to read a non-existent document to test connectivity
-    const doc = await db.collection("sessions").doc("test-connection").get();
+    const doc = await getDb().collection("sessions").doc("test-connection").get();
     return res.json({ 
       status: "ok", 
       message: "Firestore is accessible",
@@ -1640,6 +1655,35 @@ CMD ["tail", "-f", "/dev/null"]`;
     console.log(`[Docker Build] =============================================`);
     
     fs.writeFileSync(path.join(buildDir, 'Dockerfile'), dockerfileContent);
+    
+    if (action === 'dockerhub' && dockerHubUsername && dockerHubPassword) {
+      console.log(`[Docker] Logging into Docker Hub before build...`);
+      const loginResult = await new Promise((resolve) => {
+        const loginProc = spawn(dockerCmd, ['login', '--username', dockerHubUsername, '--password-stdin'], { 
+          shell: true,
+          stdin: 'pipe'
+        });
+
+        let loginOutput = '';
+        loginProc.stdout.on('data', (d) => loginOutput += d.toString());
+        loginProc.stderr.on('data', (d) => loginOutput += d.toString());
+
+        loginProc.stdin.write(dockerHubPassword);
+        loginProc.stdin.end();
+
+        loginProc.on('close', (code) => {
+          console.log(`[Docker] Login output: ${loginOutput}`);
+          resolve(code === 0);
+        });
+      });
+
+      if (!loginResult) {
+        fs.rmSync(buildDir, { recursive: true, force: true });
+        return res.status(500).json({ error: 'Failed to login to Docker Hub. Make sure you\'re using a PAT.' });
+      }
+      console.log(`[Docker] Logged into Docker Hub successfully`);
+    }
+
     console.log(`[Docker Build] Running docker build...`);
     console.log(`[Docker Build] Image name: ${imageName}`);
 

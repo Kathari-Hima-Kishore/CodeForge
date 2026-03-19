@@ -84,3 +84,5 @@ CREDENTIALS.md
 #extra stuff
 skillz
 MASTER_CONTEXT.md
+.sisyphus/plans/
+firestore.rules

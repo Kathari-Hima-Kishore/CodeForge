@@ -1,12 +1,12 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { BACKEND_URL } from '@/lib/firebase';
 import {
   Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { AlertTriangle, CheckCircle2, Monitor, Apple, Terminal, Copy, Check, ShieldAlert } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Monitor, Apple, Terminal, Copy, Check, ShieldAlert, RefreshCw, XCircle } from 'lucide-react';
 
 interface LangEntry { name: string; installed: boolean; }
 interface SupportResponse { platform: string; languages: Record<string, LangEntry>; }
@@ -114,28 +114,51 @@ export function LanguageSupportChecker() {
   const [open, setOpen]       = useState(false);
   const [data, setData]       = useState<SupportResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError]     = useState<string | null>(null);
+  const retryRef              = useRef(0);
 
   const runCheck = useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
-      const res  = await fetch(`${BACKEND_URL}/api/check-language-support`);
+      const res  = await fetch(`${BACKEND_URL}/api/check-language-support`, {
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!res.ok) throw new Error(`Server responded ${res.status}`);
       const json: SupportResponse = await res.json();
       setData(json);
-      if (Object.values(json.languages).some(v => !v.installed)) setOpen(true);
+      retryRef.current = 0;
+
+      // Always open the dialog — show both installed and missing
+      setOpen(true);
     } catch (err) {
-      console.error('Language support check failed:', err);
+      const msg = err instanceof Error ? err.message : 'Check failed';
+      setError(msg);
+      retryRef.current++;
+
+      // Auto-retry up to 3 times with delay
+      if (retryRef.current <= 3) {
+        setTimeout(() => runCheck(), 2000 * retryRef.current);
+      } else {
+        // After 3 failures, show error dialog
+        setOpen(true);
+      }
     } finally {
       setLoading(false);
     }
   }, []);
 
-  useEffect(() => { runCheck(); }, [runCheck]);
+  useEffect(() => {
+    // Delay 1s to give backend time to start
+    const timer = setTimeout(() => runCheck(), 1000);
+    return () => clearTimeout(timer);
+  }, [runCheck]);
 
-  if (loading || !data) return null;
-
-  const platformInfo = PLATFORM_LABELS[data.platform] ?? { key: 'linux' as PlatformKey, label: data.platform };
-  const missing   = Object.entries(data.languages).filter(([, v]) => !v.installed);
-  const installed = Object.entries(data.languages).filter(([, v]) =>  v.installed);
+  const missing   = data ? Object.entries(data.languages).filter(([, v]) => !v.installed) : [];
+  const installed = data ? Object.entries(data.languages).filter(([, v]) =>  v.installed) : [];
+  const platformInfo = data
+    ? (PLATFORM_LABELS[data.platform] ?? { key: 'linux' as PlatformKey, label: data.platform })
+    : { key: 'linux' as PlatformKey, label: 'Unknown' };
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -145,22 +168,50 @@ export function LanguageSupportChecker() {
         <div className="px-5 pt-5 pb-4 border-b border-border/30 shrink-0">
           <DialogHeader>
             <div className="flex items-center gap-2">
-              <AlertTriangle className="h-5 w-5 text-yellow-500 shrink-0" />
-              <DialogTitle className="text-base">Language Support</DialogTitle>
+              {error ? (
+                <XCircle className="h-5 w-5 text-red-400 shrink-0" />
+              ) : missing.length > 0 ? (
+                <AlertTriangle className="h-5 w-5 text-yellow-500 shrink-0" />
+              ) : (
+                <CheckCircle2 className="h-5 w-5 text-emerald-500 shrink-0" />
+              )}
+              <DialogTitle className="text-base">
+                {error ? 'Language Check Failed' : missing.length > 0 ? 'Language Support' : 'All Languages Ready'}
+              </DialogTitle>
             </div>
             <DialogDescription className="flex items-center gap-1.5 mt-1 text-[13px]">
-              <PlatformIcon platform={data.platform} />
-              <span>
-                Detected OS: <span className="font-semibold text-foreground">{platformInfo.label}</span>
-              </span>
-              <span className="mx-1 text-border">·</span>
-              <span>{missing.length} missing, {installed.length} installed</span>
+              {!error && data && (
+                <>
+                  <PlatformIcon platform={data.platform} />
+                  <span>
+                    Detected OS: <span className="font-semibold text-foreground">{platformInfo.label}</span>
+                  </span>
+                  <span className="mx-1 text-border">·</span>
+                  <span>{missing.length} missing, {installed.length} installed</span>
+                </>
+              )}
+              {error && (
+                <span className="text-red-400/80">Could not reach backend at {BACKEND_URL}</span>
+              )}
             </DialogDescription>
           </DialogHeader>
         </div>
 
         {/* Scrollable body */}
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
+          {/* Error state */}
+          {error && (
+            <div className="rounded-lg border border-red-500/25 bg-red-500/5 p-4 space-y-3">
+              <p className="text-sm text-red-300">{error}</p>
+              <p className="text-xs text-muted-foreground">
+                Make sure the backend server is running on <code className="bg-black/30 px-1 rounded">{BACKEND_URL}</code>
+              </p>
+              <Button variant="outline" size="sm" onClick={runCheck}>
+                <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+                Retry
+              </Button>
+            </div>
+          )}
 
           {/* Missing languages */}
           {missing.map(([key, value]) => {
@@ -225,11 +276,17 @@ export function LanguageSupportChecker() {
         {/* Footer */}
         <div className="flex items-center justify-between px-5 py-3 border-t border-border/30 bg-secondary/10 shrink-0">
           <p className="text-[11px] text-muted-foreground">
-            Restart the backend after installing tools.
+            {error ? 'Check your terminal for backend output.' : 'Restart the backend after installing tools.'}
           </p>
-          <Button variant="outline" size="sm" onClick={() => setOpen(false)}>
-            Dismiss
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" size="sm" onClick={runCheck}>
+              <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+              Re-check
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => setOpen(false)}>
+              Dismiss
+            </Button>
+          </div>
         </div>
 
       </DialogContent>

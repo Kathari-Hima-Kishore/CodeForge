@@ -1,6 +1,6 @@
 import { initializeApp, getApps, FirebaseApp } from 'firebase/app';
-import { getAuth, Auth } from 'firebase/auth';
-import { getFirestore, Firestore } from 'firebase/firestore';
+import { getAuth, Auth, initializeAuth, inMemoryPersistence } from 'firebase/auth';
+import { getFirestore, Firestore, initializeFirestore, memoryLocalCache } from 'firebase/firestore';
 
 // Firebase configuration - set these in .env.local
 const firebaseConfig = {
@@ -13,7 +13,6 @@ const firebaseConfig = {
 };
 
 // Backend URL - dynamically use current hostname for network access
-// In development: uses the same host as the page (works for both localhost and network IP)
 function getBackendUrl(): string {
   if (typeof window === 'undefined') return 'http://localhost:5001';
   
@@ -22,23 +21,18 @@ function getBackendUrl(): string {
   const protocol = window.location.protocol;
   const hostname = window.location.hostname;
   
-  // For DevTunnels pattern like "xxx-9002.inc1.devtunnels.ms", replace port in subdomain
   const portMatch = hostname.match(/-\d+\./);
   let finalHostname = hostname;
   
   if (portMatch) {
-    // DevTunnels/ngrok style - replace port in subdomain
     finalHostname = hostname.replace(portMatch[0], `-${backendPort}.`);
     return `${protocol}//${finalHostname}`;
   }
   
-  // Local development style - use port from env or default
   return `${protocol}//${hostname}:${backendPort}`;
 }
 
 export const BACKEND_URL = getBackendUrl();
-
-// Alias for backwards compatibility
 export const getDynamicBackendUrl = getBackendUrl;
 
 // Initialize Firebase only once
@@ -53,15 +47,23 @@ if (getApps().length === 0) {
   console.log("   API Key:", firebaseConfig.apiKey ? "***" : "MISSING");
   
   app = initializeApp(firebaseConfig);
-  console.log("✅ Firebase app initialized");
+  
+  // Use in-memory persistence — no localStorage/sessionStorage
+  auth = initializeAuth(app, {
+    persistence: inMemoryPersistence,
+  });
+  
+  // Use memory-only cache — no IndexedDB/offline persistence
+  db = initializeFirestore(app, {
+    localCache: memoryLocalCache(),
+  });
+  
+  console.log("✅ Firebase app initialized (memory-only persistence)");
 } else {
   console.log("🔥 Firebase app already initialized");
   app = getApps()[0];
+  auth = getAuth(app);
+  db = getFirestore(app);
 }
-
-auth = getAuth(app);
-db = getFirestore(app);
-
-console.log("✅ Firebase services ready. Auth:", auth ? "yes" : "no", "DB:", db ? "yes" : "no");
 
 export { app, auth, db };

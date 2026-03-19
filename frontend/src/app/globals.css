@@ -4,179 +4,392 @@
 
 @layer base {
   :root {
-    /* 
-     * Clean Dark Theme
-     * Base: Deep Space (#0a0a0f)
-     */
-    --background: 240 20% 4%;
-    --foreground: 0 0% 95%;
-    --card: 240 20% 6%;
-    --card-foreground: 0 0% 95%;
-    --popover: 240 20% 5%;
-    --popover-foreground: 0 0% 95%;
-    
-    /* Primary - Soft white/gray */
-    --primary: 0 0% 90%;
-    --primary-foreground: 240 20% 4%;
-    
-    /* Secondary */
-    --secondary: 240 15% 12%;
-    --secondary-foreground: 0 0% 90%;
-    
-    /* Muted tones */
-    --muted: 240 10% 15%;
-    --muted-foreground: 240 5% 55%;
-    
-    /* Accent */
-    --accent: 240 15% 20%;
-    --accent-foreground: 0 0% 90%;
-    
-    /* Borders */
-    --border: 240 10% 18%;
-    --input: 240 10% 12%;
-    --ring: 0 0% 70%;
-    --radius: 0.75rem;
-    
-    /* Chart colors */
-    --chart-1: 240 15% 30%;
-    --chart-2: 220 15% 30%;
-    --chart-3: 200 15% 30%;
-    --chart-4: 180 15% 30%;
-    --chart-5: 0 15% 30%;
+    --background: 225 50% 5%;
+    --foreground: 0 0% 100%;
+    --card: 225 45% 7%;
+    --card-foreground: 0 0% 100%;
+    --popover: 225 40% 6%;
+    --popover-foreground: 0 0% 100%;
+    --primary: 225 100% 60%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 225 35% 12%;
+    --secondary-foreground: 0 0% 100%;
+    --muted: 225 25% 16%;
+    --muted-foreground: 225 15% 60%;
+    --accent: 225 100% 65%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 225 45% 18%;
+    --input: 225 30% 10%;
+    --ring: 225 100% 60%;
+    --radius: 0;
+    color-scheme: dark;
+  }
 
-    /* Sidebar */
-    --sidebar-background: 240 20% 5%;
-    --sidebar-foreground: 0 0% 95%;
-    --sidebar-primary: 0 0% 90%;
-    --sidebar-primary-foreground: 240 20% 4%;
-    --sidebar-accent: 240 15% 12%;
-    --sidebar-accent-foreground: 0 0% 90%;
-    --sidebar-border: 240 10% 15%;
-    --sidebar-ring: 0 0% 70%;
-  }
-}
-
-@layer base {
-  * {
-    @apply border-border;
-  }
-  html, body {
-    @apply h-full m-0 p-0;
-  }
+  * { @apply border-border; }
+  html, body { @apply h-full m-0 p-0 overflow-hidden; }
   body {
-    @apply bg-background text-foreground antialiased;
-    font-feature-settings: "rlig" 1, "calt" 1;
+    @apply antialiased;
+    background: #03060f;
+    color: #FFFFFF;
   }
 }
 
-@layer utilities {
-  .scrollbar-thin::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
+/* ════════════════════════════════════════════════════════════════════════════════ */
+/* CYBERPUNK ROYAL BLUE PALETTE                                                    */
+/* ════════════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  --cyber-bg:        #03060f;
+  --cyber-bg-card:   #080e1c;
+  --cyber-bg-panel:  #0a1125;
+  --cyber-bg-input:  #040913;
+
+  --cyber-blue:      #2563eb;
+  --cyber-blue-bright: #3b82f6;
+  --cyber-blue-neon: #4f9eff;
+  --cyber-blue-cyan: #38bdf8;
+  --cyber-blue-pale: #93c5fd;
+
+  --cyber-yellow:    #eab308;
+  --cyber-green:     #22c55e;
+  --cyber-red:       #ef4444;
+  --cyber-purple:    #a855f7;
+
+  --cyber-border:    #1e3a6e;
+  --cyber-border-dim: #0f1e3a;
+  --cyber-text:      #e2e8f0;
+  --cyber-text-sub:  #94a3b8;
+  --cyber-text-dim:  #475569;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════════ */
+/* CYBER GRID BACKGROUND                                                          */
+/* ════════════════════════════════════════════════════════════════════════════════ */
+
+.cyber-grid {
+  background-image:
+    linear-gradient(rgba(37, 99, 235, 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(37, 99, 235, 0.06) 1px, transparent 1px);
+  background-size: 48px 48px;
+}
+
+/* Corner brackets — cyberpunk UI frame */
+.cyber-corner::before,
+.cyber-corner::after {
+  content: '';
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  border-color: var(--cyber-blue-bright);
+  border-style: solid;
+  border-width: 0;
+}
+.cyber-corner::before {
+  top: 8px;
+  left: 8px;
+  border-top-width: 2px;
+  border-left-width: 2px;
+}
+.cyber-corner::after {
+  bottom: 8px;
+  right: 8px;
+  border-bottom-width: 2px;
+  border-right-width: 2px;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════════ */
+/* NEO-BRUTALIST + CYBERPUNK COMPONENTS                                           */
+/* ════════════════════════════════════════════════════════════════════════════════ */
+
+/* ── Brutalist elevated — bright card for auth panel ── */
+.brutal-elevated {
+  background: var(--cyber-bg-card);
+  border: 2px solid var(--cyber-border);
+  border-radius: 0;
+  box-shadow:
+    8px 8px 0 #000000,
+    0 0 20px rgba(37, 99, 235, 0.15),
+    inset 0 1px 0 rgba(37, 99, 235, 0.08);
+  position: relative;
+}
+
+.brutal-elevated::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, rgba(37, 99, 235, 0.04) 0%, transparent 60%);
+  pointer-events: none;
+}
+
+/* ── Royal blue accent — cyber button fill ── */
+.brutal-blue {
+  background: var(--cyber-blue);
+  color: #FFFFFF;
+  border: 2px solid #000000;
+  border-radius: 0;
+  box-shadow:
+    4px 4px 0 #000000,
+    0 0 8px rgba(37, 99, 235, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  cursor: pointer;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  transition: all 0.1s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.brutal-blue::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.1), transparent);
+  transition: left 0.3s ease;
+}
+
+.brutal-blue:hover {
+  background: var(--cyber-blue-bright);
+  box-shadow:
+    6px 6px 0 #000000,
+    0 0 20px rgba(59, 130, 246, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.15);
+  transform: translate(-2px, -2px);
+}
+
+.brutal-blue:hover::before {
+  left: 100%;
+}
+
+.brutal-blue:active {
+  box-shadow: 2px 2px 0 #000000;
+  transform: translate(2px, 2px);
+}
+
+.brutal-blue:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  box-shadow: none;
+  transform: none;
+  background: var(--cyber-border-dim);
+}
+
+/* ── Brutalist outline button ── */
+.brutal-outline {
+  background: transparent;
+  color: var(--cyber-blue-neon);
+  border: 2px solid var(--cyber-blue);
+  border-radius: 0;
+  box-shadow:
+    3px 3px 0 rgba(37, 99, 235, 0.3),
+    0 0 6px rgba(37, 99, 235, 0.2);
+  cursor: pointer;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  transition: all 0.1s ease;
+}
+
+.brutal-outline:hover {
+  background: rgba(37, 99, 235, 0.12);
+  box-shadow:
+    5px 5px 0 rgba(37, 99, 235, 0.4),
+    0 0 16px rgba(37, 99, 235, 0.3);
+  transform: translate(-2px, -2px);
+  border-color: var(--cyber-blue-neon);
+}
+
+.brutal-outline:active {
+  box-shadow: 2px 2px 0 rgba(37, 99, 235, 0.3);
+  transform: translate(2px, 2px);
+}
+
+.brutal-outline:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  box-shadow: none;
+  transform: none;
+}
+
+/* ── Cyberpunk tab ── */
+.cyber-tab {
+  background: transparent;
+  border: none;
+  color: var(--cyber-text-dim);
+  font-weight: 700;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  cursor: pointer;
+  padding: 0 0 8px 0;
+  position: relative;
+  transition: color 0.15s ease;
+}
+
+.cyber-tab:hover {
+  color: var(--cyber-text-sub);
+}
+
+.cyber-tab.active {
+  color: #FFFFFF;
+}
+
+.cyber-tab.active::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--cyber-blue-bright);
+  box-shadow:
+    2px 2px 0 #000000,
+    0 0 8px rgba(59, 130, 246, 0.6);
+}
+
+/* ── Feature block — brutalist with cyberpunk accents ── */
+.cyber-feature {
+  background: var(--cyber-bg-card);
+  border: 2px solid var(--cyber-border-dim);
+  border-radius: 0;
+  box-shadow: 4px 4px 0 #000000;
+  padding: 14px 16px;
+  transition: all 0.15s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.cyber-feature::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, var(--cyber-blue), var(--cyber-blue-cyan), var(--cyber-blue));
+  opacity: 0.6;
+}
+
+.cyber-feature:hover {
+  background: var(--cyber-bg-panel);
+  box-shadow:
+    6px 6px 0 #000000,
+    0 0 8px rgba(37, 99, 235, 0.15);
+  transform: translate(-2px, -2px);
+  border-color: var(--cyber-border);
+}
+
+/* ════════════════════════════════════════════════════════════════════════════════ */
+/* ANIMATIONS                                                                    */
+/* ════════════════════════════════════════════════════════════════════════════════ */
+
+@keyframes reveal-up {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes float-slow {
+  0%, 100% { transform: translateY(0px); }
+  50%       { transform: translateY(-12px); }
+}
+
+@keyframes float-medium {
+  0%, 100% { transform: translateY(0px) scale(1); }
+  50%       { transform: translateY(-8px) scale(1.02); }
+}
+
+@keyframes logo-neon-pulse {
+  0%, 100% {
+    box-shadow:
+      4px 4px 0 #000000,
+      0 0 0 2px rgba(59, 130, 246, 0.5),
+      0 0 16px rgba(37, 99, 235, 0.4);
   }
-  .scrollbar-thin::-webkit-scrollbar-track {
-    background: transparent;
-  }
-  .scrollbar-thin::-webkit-scrollbar-thumb {
-    background: hsl(var(--muted) / 0.5);
-    border-radius: 3px;
-  }
-  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
-    background: hsl(var(--muted-foreground) / 0.5);
+  50% {
+    box-shadow:
+      4px 4px 0 #000000,
+      0 0 0 3px rgba(59, 130, 246, 0.8),
+      0 0 30px rgba(37, 99, 235, 0.7),
+      0 0 50px rgba(37, 99, 235, 0.3);
   }
 }
 
-@layer utilities {
-  .glass-premium {
-    background: rgba(10, 10, 15, 0.85);
-    backdrop-filter: blur(24px) saturate(180%);
-    -webkit-backdrop-filter: blur(24px) saturate(180%);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    box-shadow: 0 24px 48px -12px rgba(0, 0, 0, 0.5);
+@keyframes hero-glow-pulse {
+  0%, 100% {
+    filter: drop-shadow(0 0 12px rgba(59, 130, 246, 0.4));
   }
-
-  .glass-nav {
-    background: rgba(10, 10, 15, 0.7);
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
-    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-  }
-
-  .glass-panel {
-    background: rgba(15, 15, 20, 0.6);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    border: 1px solid rgba(255, 255, 255, 0.04);
-  }
-
-  .glass-subtle {
-    background: rgba(255, 255, 255, 0.03);
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
-    border: 1px solid rgba(255, 255, 255, 0.04);
+  50% {
+    filter: drop-shadow(0 0 30px rgba(59, 130, 246, 0.7))
+            drop-shadow(0 0 60px rgba(59, 130, 246, 0.3));
   }
 }
 
-@layer utilities {
-  .bg-grid-pattern {
-    background-image: 
-      linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
-    background-size: 40px 40px;
-  }
-
-  .bg-noise {
-    position: relative;
-  }
-  .bg-noise::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
-    opacity: 0.02;
-    pointer-events: none;
-  }
+@keyframes diagonal-beam {
+  0%   { left: -75%; opacity: 0; }
+  15%  { left: -75%; opacity: 1; }
+  85%  { left: 25%; opacity: 1; }
+  100% { left: 25%; opacity: 0; }
 }
 
-@layer utilities {
-  .focus-ring {
-    @apply outline-none ring-2 ring-white/20 ring-offset-2 ring-offset-background;
-  }
+@keyframes orb-flicker {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.7; }
 }
 
-/* ── Autofill override: keep inputs dark on browser credential fill ── */
+[data-animate] {
+  opacity: 0;
+}
+[data-animate].is-visible {
+  animation: reveal-up 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* ════════════════════════════════════════════════════════════════════════════════ */
+/* FORM ELEMENTS — Cyberpunk brutalist                                            */
+/* ════════════════════════════════════════════════════════════════════════════════ */
+
+.form-input {
+  background: var(--cyber-bg-input);
+  border: 2px solid var(--cyber-border-dim);
+  border-radius: 0;
+  color: #FFFFFF;
+  padding: 12px 14px;
+  font-size: 14px;
+  width: 100%;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  caret-color: var(--cyber-blue-neon);
+}
+
+.form-input:focus {
+  outline: none;
+  border-color: var(--cyber-blue-bright);
+  box-shadow:
+    4px 4px 0 #000000,
+    0 0 12px rgba(37, 99, 235, 0.3);
+}
+
+.form-input::placeholder {
+  color: var(--cyber-text-dim);
+}
+
+/* ════════════════════════════════════════════════════════════════════════════════ */
+/* UTILITIES                                                                     */
+/* ════════════════════════════════════════════════════════════════════════════════ */
+
 input:-webkit-autofill,
 input:-webkit-autofill:hover,
-input:-webkit-autofill:focus,
-input:-webkit-autofill:active {
-  -webkit-box-shadow: 0 0 0 1000px #07091c inset !important;
-  -webkit-text-fill-color: rgba(255, 255, 255, 0.88) !important;
-  caret-color: white;
-  transition: background-color 9999s ease-in-out 0s;
+input:-webkit-autofill:focus {
+  -webkit-box-shadow: 0 0 0 1000px var(--cyber-bg) inset !important;
+  -webkit-text-fill-color: #FFFFFF !important;
 }
 
-@keyframes scanLine {
-  0%   { transform: translateY(-100px); opacity: 0; }
-  5%   { opacity: 1; }
-  95%  { opacity: 1; }
-  100% { transform: translateY(1000px); opacity: 0; }
-}
-
-@keyframes shimmerBtn {
-  0%   { transform: translateX(-100%); }
-  100% { transform: translateX(300%); }
-}
-
-@keyframes limitsGlow {
-  0%, 100% { opacity: 0.35; transform: scale(1); }
-  50%       { opacity: 1.00; transform: scale(1.06); }
-}
-
-@keyframes glitchSlip {
-  0%, 84%, 100% { transform: none; }
-  86%            { transform: skewX(-1.2deg) translateX(4px);  }
-  88%            { transform: skewX( 0.6deg) translateX(-3px); }
-  90%            { transform: none; }
-  92%            { transform: translateX(3px) skewX(-0.5deg);  }
-  94%            { transform: none; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
