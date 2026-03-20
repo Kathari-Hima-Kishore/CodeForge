@@ -120,15 +120,15 @@ interface SessionContextType {
   files: FileItem[];
   currentFileId: string | null;
   setCurrentFileId: (id: string) => void;
-  createFile: (name: string, language: string, parentId?: string | null) => void;
+  createFile: (name: string, language: string, parentId?: string | null) => Promise<void>;
   updateFileContent: (id: string, content: string) => void;
-  renameFile: (id: string, newName: string) => void;
-  deleteFile: (id: string) => void;
+  renameFile: (id: string, newName: string) => Promise<void>;
+  deleteFile: (id: string) => Promise<void>;
 
   // Folder management
-  createFolder: (name: string, parentId?: string | null) => void;
-  renameFolder: (id: string, newName: string) => void;
-  deleteFolder: (id: string) => void;
+  createFolder: (name: string, parentId?: string | null) => Promise<void>;
+  renameFolder: (id: string, newName: string) => Promise<void>;
+  deleteFolder: (id: string) => Promise<void>;
 
   // Chat
   messages: ChatMessage[];
@@ -205,6 +205,15 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const userRef = React.useRef<typeof user>(null);
   useEffect(() => { sessionRef.current = session; }, [session]);
   useEffect(() => { userRef.current = user; }, [user]);
+
+  // Output - defined EARLY to avoid dependency issues in effects
+  const clearOutput = useCallback(() => {
+    setOutput([]);
+  }, []);
+
+  const addOutput = useCallback((type: OutputItem['type'], content: string) => {
+    setOutput(prev => [...prev, { type, content, timestamp: Date.now() }]);
+  }, []);
 
   // Fetch user's existing sessions from Firestore
   useEffect(() => {
@@ -296,6 +305,91 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     // The useEffect listener above handles real-time updates now
   }, []);
 
+  // Flush pending updates when session changes or component unmounts
+  useEffect(() => {
+    return () => {
+      // Cleanup on unmount - flush any pending updates
+      if (debounceTimeoutRef.current) {
+        clearTimeout(debounceTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  // Auto-restore last session on page load
+  useEffect(() => {
+    const restoreLastSession = async () => {
+      if (!user || session || isConnecting) return;
+
+      try {
+        const lastSessionId = localStorage.getItem('codeforge-last-session');
+        if (lastSessionId) {
+          console.log('🔄 Restoring last session:', lastSessionId);
+          addOutput('info', '🔄 Restoring your last session...');
+
+          const normalizedId = lastSessionId.toUpperCase().trim();
+          const sessionRef = doc(db, 'sessions', normalizedId);
+          const sessionSnap = await getDoc(sessionRef);
+
+          if (!sessionSnap.exists()) {
+            console.warn('❌ Session no longer exists');
+            localStorage.removeItem('codeforge-last-session');
+            return;
+          }
+
+          const data = sessionSnap.data() as SessionData;
+          const isHost = data.hostId === user.uid;
+
+          // Reactivate if needed
+          if (!data.isActive) {
+            if (isHost) {
+              await updateDoc(sessionRef, { isActive: true });
+            } else {
+              console.warn('❌ Session has ended');
+              localStorage.removeItem('codeforge-last-session');
+              return;
+            }
+          }
+
+          // Update online status
+          await updateDoc(sessionRef, {
+            [`participants.${user.uid}.isOnline`]: true,
+          });
+
+          const myRole = isHost ? 'host' : (data.participants[user.uid]?.role || 'editor');
+
+          setSession({
+            sessionId: normalizedId,
+            name: data.name,
+            role: myRole,
+            hostId: data.hostId,
+            hostName: data.hostName,
+            participants: data.participants,
+          });
+
+          // Load files
+          if (data.files?.length > 0) {
+            setFiles(data.files);
+            setCurrentFileId(data.files[0].id);
+          }
+
+          // Load messages
+          if (data.messages) {
+            setMessages(data.messages);
+          }
+
+          addOutput('success', `🎉 Restored session "${data.name}"!`);
+        }
+      } catch (error) {
+        console.error('Failed to restore last session:', error);
+        localStorage.removeItem('codeforge-last-session');
+      }
+    };
+
+    // Small delay to ensure user is fully loaded
+    const timer = setTimeout(restoreLastSession, 100);
+    return () => clearTimeout(timer);
+  }, [user, session, isConnecting]);
+
   // Listen to session changes in Firestore
   useEffect(() => {
     if (!session?.sessionId || !user) return;
@@ -338,7 +432,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     return () => unsubscribe();
   }, [session?.sessionId, user]);
 
-  // Update online status
+  // Update online status and handle page unload
   useEffect(() => {
     if (!session?.sessionId || !user) return;
 
@@ -356,18 +450,21 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     updateOnlineStatus(true);
 
     const handleBeforeUnload = () => {
-      updateOnlineStatus(false);
+      // On page unload, just mark online as false
+      // Note: Can't reliably do async in beforeunload, so we don't await
+      updateOnlineStatus(false).catch(() => {});
     };
 
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => {
       window.removeEventListener('beforeunload', handleBeforeUnload);
-      updateOnlineStatus(false);
+      // When component unmounts, update online status
+      updateOnlineStatus(false).catch(() => {});
     };
   }, [session?.sessionId, user]);
 
   // File management
-  const createFile = useCallback((name: string, language: string, parentId: string | null = null) => {
+  const createFile = useCallback(async (name: string, language: string, parentId: string | null = null) => {
     const newFile: FileItem = {
       id: generateId(12),
       name,
@@ -376,65 +473,116 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       isFolder: false,
       parentId,
     };
-    setFiles(prev => {
-      const updated = [...prev, newFile];
-      if (session?.sessionId) {
-        const sessionRef = doc(db, 'sessions', session.sessionId);
-        updateDoc(sessionRef, { files: updated });
-      }
-      return updated;
-    });
+
+    const updated = [...files, newFile];
+    setFiles(updated);
     setCurrentFileId(newFile.id);
-  }, [session?.sessionId]);
+
+    // Persist to Firestore with error handling
+    if (session?.sessionId) {
+      try {
+        const sessionRef = doc(db, 'sessions', session.sessionId);
+        await updateDoc(sessionRef, { files: updated });
+        console.log('✅ File created and persisted to Firestore:', name);
+      } catch (error) {
+        console.error('❌ Failed to persist file to Firestore:', error);
+        addOutput('error', `❌ Warning: File "${name}" created but not saved to server. Changes may be lost.`);
+      }
+    }
+  }, [session?.sessionId, files, addOutput]);
 
   // Debounce ref for Firestore writes (free tier optimization)
   const debounceTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
+  const pendingFilesRef = React.useRef<FileItem[] | null>(null);
+
+  // Helper to flush pending debounced updates
+  const flushPendingFileUpdates = useCallback(async () => {
+    if (debounceTimeoutRef.current) {
+      clearTimeout(debounceTimeoutRef.current);
+      debounceTimeoutRef.current = null;
+    }
+
+    if (pendingFilesRef.current && session?.sessionId) {
+      try {
+        const sessionRef = doc(db, 'sessions', session.sessionId);
+        await updateDoc(sessionRef, { files: pendingFilesRef.current });
+        console.log('✅ Pending file changes flushed to Firestore');
+        pendingFilesRef.current = null;
+      } catch (error) {
+        console.error('❌ Failed to flush file changes:', error);
+      }
+    }
+  }, [session?.sessionId]);
 
   const updateFileContent = useCallback((id: string, content: string) => {
-    setFiles(prev => {
-      const updated = prev.map(f => f.id === id ? { ...f, content } : f);
+    const updated = files.map(f => f.id === id ? { ...f, content } : f);
+    setFiles(updated);
 
-      // Debounce Firestore writes (500ms) - critical for free tier
-      if (session?.sessionId) {
-        if (debounceTimeoutRef.current) {
-          clearTimeout(debounceTimeoutRef.current);
-        }
-        debounceTimeoutRef.current = setTimeout(() => {
+    // Debounce Firestore writes (500ms) - critical for free tier
+    if (session?.sessionId) {
+      // Store for potential flush
+      pendingFilesRef.current = updated;
+
+      if (debounceTimeoutRef.current) {
+        clearTimeout(debounceTimeoutRef.current);
+      }
+      debounceTimeoutRef.current = setTimeout(async () => {
+        try {
           const sessionRef = doc(db, 'sessions', session.sessionId);
-          updateDoc(sessionRef, { files: updated });
-        }, 500);
-      }
-      return updated;
-    });
-  }, [session?.sessionId]);
+          await updateDoc(sessionRef, { files: updated });
+          console.log('✅ File content persisted to Firestore for file:', id);
+          pendingFilesRef.current = null;
+          debounceTimeoutRef.current = null;
+        } catch (error) {
+          console.error('❌ Failed to persist file content to Firestore:', error);
+          addOutput('error', `❌ Warning: File changes not saved to server. Changes may be lost.`);
+        }
+      }, 500);
+    }
+  }, [session?.sessionId, files, addOutput]);
 
-  const deleteFile = useCallback((id: string) => {
-    setFiles(prev => {
-      const updated = prev.filter(f => f.id !== id);
-      if (currentFileId === id && updated.length > 0) {
-        setCurrentFileId(updated[0].id);
-      }
-      if (session?.sessionId) {
-        const sessionRef = doc(db, 'sessions', session.sessionId);
-        updateDoc(sessionRef, { files: updated });
-      }
-      return updated;
-    });
-  }, [currentFileId, session?.sessionId]);
+  const deleteFile = useCallback(async (id: string) => {
+    const updated = files.filter(f => f.id !== id);
 
-  const renameFile = useCallback((id: string, newName: string) => {
-    setFiles(prev => {
-      const updated = prev.map(f => f.id === id ? { ...f, name: newName } : f);
-      if (session?.sessionId) {
+    // Update current file if deleted
+    if (currentFileId === id && updated.length > 0) {
+      setCurrentFileId(updated[0].id);
+    }
+
+    setFiles(updated);
+
+    // Persist to Firestore with error handling
+    if (session?.sessionId) {
+      try {
         const sessionRef = doc(db, 'sessions', session.sessionId);
-        updateDoc(sessionRef, { files: updated });
+        await updateDoc(sessionRef, { files: updated });
+        console.log('✅ File deleted and persisted to Firestore:', id);
+      } catch (error) {
+        console.error('❌ Failed to persist file deletion to Firestore:', error);
+        addOutput('error', `❌ Warning: File deleted locally but not on server. Changes may be lost.`);
       }
-      return updated;
-    });
-  }, [session?.sessionId]);
+    }
+  }, [files, currentFileId, session?.sessionId, addOutput]);
+
+  const renameFile = useCallback(async (id: string, newName: string) => {
+    const updated = files.map(f => f.id === id ? { ...f, name: newName } : f);
+    setFiles(updated);
+
+    // Persist to Firestore with error handling
+    if (session?.sessionId) {
+      try {
+        const sessionRef = doc(db, 'sessions', session.sessionId);
+        await updateDoc(sessionRef, { files: updated });
+        console.log('✅ File renamed and persisted to Firestore:', newName);
+      } catch (error) {
+        console.error('❌ Failed to persist file rename to Firestore:', error);
+        addOutput('error', `❌ Warning: File renamed locally but not on server. Changes may be lost.`);
+      }
+    }
+  }, [files, session?.sessionId, addOutput]);
 
   // Folder management
-  const createFolder = useCallback((name: string, parentId: string | null = null) => {
+  const createFolder = useCallback(async (name: string, parentId: string | null = null) => {
     const newFolder: FileItem = {
       id: generateId(12),
       name,
@@ -443,55 +591,75 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       isFolder: true,
       parentId,
     };
-    setFiles(prev => {
-      const updated = [...prev, newFolder];
-      if (session?.sessionId) {
+
+    const updated = [...files, newFolder];
+    setFiles(updated);
+
+    // Persist to Firestore with error handling
+    if (session?.sessionId) {
+      try {
         const sessionRef = doc(db, 'sessions', session.sessionId);
-        updateDoc(sessionRef, { files: updated });
+        await updateDoc(sessionRef, { files: updated });
+        console.log('✅ Folder created and persisted to Firestore:', name);
+      } catch (error) {
+        console.error('❌ Failed to persist folder to Firestore:', error);
+        addOutput('error', `❌ Warning: Folder "${name}" created but not saved to server. Changes may be lost.`);
       }
-      return updated;
-    });
-  }, [session?.sessionId]);
+    }
+  }, [session?.sessionId, files, addOutput]);
 
-  const renameFolder = useCallback((id: string, newName: string) => {
-    setFiles(prev => {
-      const updated = prev.map(f => f.id === id ? { ...f, name: newName } : f);
-      if (session?.sessionId) {
+  const renameFolder = useCallback(async (id: string, newName: string) => {
+    const updated = files.map(f => f.id === id ? { ...f, name: newName } : f);
+    setFiles(updated);
+
+    // Persist to Firestore with error handling
+    if (session?.sessionId) {
+      try {
         const sessionRef = doc(db, 'sessions', session.sessionId);
-        updateDoc(sessionRef, { files: updated });
+        await updateDoc(sessionRef, { files: updated });
+        console.log('✅ Folder renamed and persisted to Firestore:', newName);
+      } catch (error) {
+        console.error('❌ Failed to persist folder rename to Firestore:', error);
+        addOutput('error', `❌ Warning: Folder renamed locally but not on server. Changes may be lost.`);
       }
-      return updated;
-    });
-  }, [session?.sessionId]);
+    }
+  }, [files, session?.sessionId, addOutput]);
 
-  const deleteFolder = useCallback((id: string) => {
-    setFiles(prev => {
-      const getAllDescendantIds = (folderId: string): string[] => {
-        const children = prev.filter(f => f.parentId === folderId);
-        let ids = children.map(f => f.id);
-        children.forEach(child => {
-          if (child.isFolder) {
-            ids = [...ids, ...getAllDescendantIds(child.id)];
-          }
-        });
-        return ids;
-      };
+  const deleteFolder = useCallback(async (id: string) => {
+    const getAllDescendantIds = (folderId: string, currentFiles: FileItem[]): string[] => {
+      const children = currentFiles.filter(f => f.parentId === folderId);
+      let ids = children.map(f => f.id);
+      children.forEach(child => {
+        if (child.isFolder) {
+          ids = [...ids, ...getAllDescendantIds(child.id, currentFiles)];
+        }
+      });
+      return ids;
+    };
 
-      const idsToDelete = new Set([id, ...getAllDescendantIds(id)]);
-      const updated = prev.filter(f => !idsToDelete.has(f.id));
+    const idsToDelete = new Set([id, ...getAllDescendantIds(id, files)]);
+    const updated = files.filter(f => !idsToDelete.has(f.id));
 
-      if (currentFileId && idsToDelete.has(currentFileId)) {
-        const remaining = updated.filter(f => !f.isFolder);
-        setCurrentFileId(remaining.length > 0 ? remaining[0].id : null);
-      }
+    // Update current file if it's being deleted
+    if (currentFileId && idsToDelete.has(currentFileId)) {
+      const remaining = updated.filter(f => !f.isFolder);
+      setCurrentFileId(remaining.length > 0 ? remaining[0].id : null);
+    }
 
-      if (session?.sessionId) {
+    setFiles(updated);
+
+    // Persist to Firestore with error handling
+    if (session?.sessionId) {
+      try {
         const sessionRef = doc(db, 'sessions', session.sessionId);
-        updateDoc(sessionRef, { files: updated });
+        await updateDoc(sessionRef, { files: updated });
+        console.log('✅ Folder deleted and persisted to Firestore:', id);
+      } catch (error) {
+        console.error('❌ Failed to persist folder deletion to Firestore:', error);
+        addOutput('error', `❌ Warning: Folder deleted locally but not on server. Changes may be lost.`);
       }
-      return updated;
-    });
-  }, [currentFileId, session?.sessionId]);
+    }
+  }, [files, currentFileId, session?.sessionId, addOutput]);
 
   // Chat
   const sendMessage = useCallback(async (content: string) => {
@@ -515,15 +683,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       return updated;
     });
   }, [user, session]);
-
-  // Output
-  const clearOutput = useCallback(() => {
-    setOutput([]);
-  }, []);
-
-  const addOutput = useCallback((type: OutputItem['type'], content: string) => {
-    setOutput(prev => [...prev, { type, content, timestamp: Date.now() }]);
-  }, []);
 
   // Socket.IO connection management
   useEffect(() => {
@@ -770,6 +929,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         participants: { [user.uid]: participant },
       });
 
+      // Store session ID for auto-restore on page refresh
+      localStorage.setItem('codeforge-last-session', sessionId);
+
       addOutput('success', `🎉 Session "${name}" created! Share code: ${sessionId}`);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to create session';
@@ -834,6 +996,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         hostName: data.hostName,
         participants: updatedParticipants,
       });
+
+      // Store session ID for auto-restore on page refresh
+      localStorage.setItem('codeforge-last-session', normalizedId);
 
       // Load session files
       if (data.files?.length > 0) {
@@ -910,6 +1075,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         participants: data.participants,
       });
 
+      // Store session ID for auto-restore on page refresh
+      localStorage.setItem('codeforge-last-session', normalizedId);
+
       // Load session files
       if (data.files?.length > 0) {
         setFiles(data.files);
@@ -933,6 +1101,21 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   // Leave the current session
   const leaveSession = useCallback(async () => {
     if (!session?.sessionId || !user) return;
+
+    // CRITICAL: Flush any pending debounced file updates before leaving
+    if (debounceTimeoutRef.current) {
+      clearTimeout(debounceTimeoutRef.current);
+    }
+    if (pendingFilesRef.current && session?.sessionId) {
+      try {
+        const sessionRef = doc(db, 'sessions', session.sessionId);
+        await updateDoc(sessionRef, { files: pendingFilesRef.current });
+        console.log('✅ Last file changes saved before leaving session');
+        pendingFilesRef.current = null;
+      } catch (error) {
+        console.error('❌ Failed to save final changes:', error);
+      }
+    }
 
     const sessionId = session.sessionId;
 
@@ -960,6 +1143,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       setConnectionError(null);
       setFiles([]);
       setCurrentFileId(null);
+
+      // Clear stored session ID to prevent auto-restore
+      localStorage.removeItem('codeforge-last-session');
+
       refreshMySessions();
     }
   }, [session, user, refreshMySessions]);
