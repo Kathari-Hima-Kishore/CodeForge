@@ -33,6 +33,105 @@ function killProcessTree(child) {
   }
 }
 
+// =============================================================================
+// Docker Hub Helper Functions (used by multiple endpoints)
+// =============================================================================
+
+async function checkDockerHubRepository(username, password, repoName) {
+  const https = require('https');
+
+  return new Promise((resolve) => {
+    const authData = JSON.stringify({ identifier: username, secret: password });
+    const authReq = https.request({
+      hostname: 'hub.docker.com',
+      path: '/v2/auth/token',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(authData)
+      }
+    }, (authRes) => {
+      let authBody = '';
+      authRes.on('data', chunk => authBody += chunk);
+      authRes.on('end', () => {
+        try {
+          const authJson = JSON.parse(authBody);
+          const token = authJson.token || authJson.access_token;
+          if (token) {
+            const repoReq = https.request({
+              hostname: 'hub.docker.com',
+              path: `/v2/repositories/${username}/${repoName}/`,
+              method: 'GET',
+              headers: {
+                'Authorization': `Bearer ${token}`
+              }
+            }, (repoRes) => {
+              let repoBody = '';
+              repoRes.on('data', chunk => repoBody += chunk);
+              repoRes.on('end', () => {
+                if (repoRes.statusCode === 200) {
+                  resolve({ exists: true, message: 'Repository exists' });
+                } else if (repoRes.statusCode === 404) {
+                  resolve({ exists: false, message: 'Repository not found', token });
+                } else {
+                  resolve({ exists: null, message: `Unexpected response: ${repoRes.statusCode}`, token });
+                }
+              });
+            });
+            repoReq.on('error', () => resolve({ exists: null, message: 'Network error checking repository', token }));
+            repoReq.end();
+          } else {
+            resolve({ exists: null, message: authJson.detail || 'Authentication failed' });
+          }
+        } catch (e) {
+          resolve({ exists: null, message: 'Failed to parse auth response' });
+        }
+      });
+    });
+    authReq.on('error', () => resolve({ exists: null, message: 'Network error during authentication' }));
+    authReq.write(authData);
+    authReq.end();
+  });
+}
+
+async function createDockerHubRepository(username, password, repoName, token) {
+  const https = require('https');
+
+  return new Promise((resolve) => {
+    const createData = JSON.stringify({ name: repoName, namespace: username });
+    const createReq = https.request({
+      hostname: 'hub.docker.com',
+      path: `/v2/repositories/${username}/`,
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(createData)
+      }
+    }, (createRes) => {
+      let createBody = '';
+      createRes.on('data', chunk => createBody += chunk);
+      createRes.on('end', () => {
+        if (createRes.statusCode === 201 || createRes.statusCode === 200) {
+          resolve({ created: true, message: 'Repository created successfully' });
+        } else {
+          try {
+            const errJson = JSON.parse(createBody);
+            resolve({ created: false, message: errJson.detail || `Failed to create repository (${createRes.statusCode})` });
+          } catch {
+            resolve({ created: false, message: `Failed to create repository (${createRes.statusCode})` });
+          }
+        }
+      });
+    });
+    createReq.on('error', () => resolve({ created: false, message: 'Network error creating repository' }));
+    createReq.write(createData);
+    createReq.end();
+  });
+}
+
+console.log('✅ Docker Hub helper functions loaded');
+
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -1015,50 +1114,87 @@ app.get('/api/test-firestore', async (req, res) => {
 
 // Check Docker status
 app.get('/api/check-docker', (req, res) => {
-  const dockerCmd = process.platform === 'win32' ? 'docker.exe' : 'docker';
-  
+  // On Windows, try multiple docker executables and PATH locations
+  const isWin = process.platform === 'win32';
+  const candidates = isWin
+    ? ['docker.exe', 'docker', 'C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.exe', 'C:\\ProgramData\\DockerDesktop\\version-bin\\docker.exe', 'C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.exe']
+    : ['docker'];
+
+  let dockerCmd = isWin ? 'docker.exe' : 'docker';
+  let foundCmd = null;
+  let cmdSearchErr = null;
+
+  // Try to find docker executable via shell (inherits full PATH)
+  for (const cmd of candidates) {
+    try {
+      execSync(`${cmd} version --format '{{.Server.Version}}'`, { stdio: 'pipe', timeout: 8000, shell: true });
+      foundCmd = cmd;
+      break;
+    } catch (e) {
+      cmdSearchErr = e.message;
+    }
+  }
+
+  if (!foundCmd) {
+    return res.json({
+      installed: false,
+      running: false,
+      status: 'error',
+      error: 'Docker is not accessible',
+      hint: 'Make sure Docker Desktop is installed and running. Restart Docker Desktop if needed.',
+      details: cmdSearchErr ? cmdSearchErr.substring(0, 200) : 'docker command not found in PATH'
+    });
+  }
+
+  dockerCmd = foundCmd;
+
   try {
-    execSync(`${dockerCmd} info`, { stdio: 'pipe' });
-    
+    // Test if docker daemon is responsive via shell
+    execSync(`${dockerCmd} info`, { stdio: 'pipe', timeout: 10000, shell: true });
+
     // Docker is running - get version info
     let version = '';
-    let status = 'running';
     try {
-      version = execSync(`${dockerCmd} version --format '{{.Server.Version}}'`, { encoding: 'utf8' }).trim();
+      version = execSync(`${dockerCmd} version --format '{{.Server.Version}}'`, { encoding: 'utf8', timeout: 8000, shell: true }).trim();
     } catch (e) {
       // Ignore version fetch errors
     }
-    
-    res.json({ 
-      installed: true, 
-      running: true, 
+
+    res.json({
+      installed: true,
+      running: true,
       version: version,
-      status: status,
-      message: version ? `Docker ${version} is running` : 'Docker is running'
+      status: 'running',
+      message: version ? `Docker ${version} is running` : 'Docker is running',
+      command: dockerCmd
     });
   } catch (err) {
-    const errorMsg = err.message || '';
-    let message = 'Docker is not running';
+    const errorMsg = (err.message || '') + (err.stderr || '');
+    let message = 'Docker daemon is not running';
     let hint = 'Please start Docker Desktop';
-    
-    if (errorMsg.includes('npipe') || errorMsg.includes('pipe')) {
+
+    if (errorMsg.includes('npipe') || errorMsg.includes('pipe') || errorMsg.includes('named pipe')) {
       message = 'Docker daemon is not accessible';
-      hint = 'Make sure Docker Desktop is running. Try restarting Docker Desktop.';
-    } else if (errorMsg.includes('not found') || errorMsg.includes('no such file')) {
+      hint = 'Docker Desktop may still be starting. Try again in a few seconds.';
+    } else if (errorMsg.includes('not found') || errorMsg.includes('no such file') || errorMsg.includes('ENOENT')) {
       message = 'Docker is not installed';
       hint = 'Install Docker Desktop from https://docker.com/products/docker-desktop';
-    } else if (errorMsg.includes('permission denied')) {
+    } else if (errorMsg.includes('permission denied') || errorMsg.includes('EPERM')) {
       message = 'Docker permission denied';
-      hint = 'Run Docker Desktop as administrator or check permissions.';
+      hint = 'Run Docker Desktop as administrator.';
+    } else if (errorMsg.includes('timeout') || errorMsg.includes('ETIMEDOUT')) {
+      message = 'Docker is slow to respond';
+      hint = 'Docker Desktop may be busy. Try again in a moment.';
     }
-    
-    res.json({ 
-      installed: false, 
-      running: false, 
+
+    res.json({
+      installed: true,
+      running: false,
       status: 'error',
       error: message,
       hint: hint,
-      details: errorMsg.substring(0, 200)
+      details: errorMsg.substring(0, 300),
+      command: dockerCmd
     });
   }
 });
@@ -1585,20 +1721,33 @@ CMD ["node", "${entryFile}"]`;
         console.log(`[Docker Build] DETECTED: Flask`);
         framework = 'flask';
         entryFile = pythonFiles.includes('app.py') ? 'app.py' : mainPyFile;
-        detectedPort = 5000;
+        detectedPort = 10000;  // ✅ Changed from 5000 to 10000 (Render standard)
         console.log(`[Docker Build] ENTRY: ${entryFile} | PORT: ${detectedPort}`);
-        
+
+        // Add gunicorn to dependencies if using requirements.txt
+        if (!hasRequirements) {
+          fs.writeFileSync(path.join(buildDir, 'requirements.txt'), 'Flask\ngunicorn');
+          hasRequirements = true;
+        } else if (!files['requirements.txt']?.includes('gunicorn')) {
+          const reqs = files['requirements.txt'] || '';
+          fs.writeFileSync(path.join(buildDir, 'requirements.txt'), reqs + (reqs.endsWith('\n') ? '' : '\n') + 'gunicorn');
+        }
+
         let dockerfileBody = '';
         if (hasRequirements) {
           dockerfileBody = `COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 `;
         }
+
+        // ✅ Extract app module name instead of hardcoding "app"
+        const appModule = entryFile.replace('.py', '');
+
         dockerfileContent = `FROM python:3.11-slim
 WORKDIR /app
 ${dockerfileBody}COPY . .
 EXPOSE ${detectedPort}
-CMD ["python", "-u", "${entryFile}"]`;
+CMD ["gunicorn", "${appModule}:app", "--bind", "0.0.0.0:${detectedPort}"]`;
         
       } else if (reqContent.includes('fastapi') || reqContent.includes('uvicorn')) {
         // FastAPI
@@ -1809,107 +1958,6 @@ CMD ["tail", "-f", "/dev/null"]`;
       });
     }
 
-// =============================================================================
-// Docker Hub Helper Functions
-// =============================================================================
-
-async function checkDockerHubRepository(username, password, repoName) {
-  const https = require('https');
-  
-  return new Promise((resolve) => {
-    const authData = JSON.stringify({ identifier: username, secret: password });
-    const authReq = https.request({
-      hostname: 'hub.docker.com',
-      path: '/v2/auth/token',
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(authData)
-      }
-    }, (authRes) => {
-      let authBody = '';
-      authRes.on('data', chunk => authBody += chunk);
-      authRes.on('end', () => {
-        try {
-          const authJson = JSON.parse(authBody);
-          const token = authJson.token || authJson.access_token;
-          if (token) {
-            const repoReq = https.request({
-              hostname: 'hub.docker.com',
-              path: `/v2/repositories/${username}/${repoName}/`,
-              method: 'GET',
-              headers: {
-                'Authorization': `Bearer ${token}`
-              }
-            }, (repoRes) => {
-              let repoBody = '';
-              repoRes.on('data', chunk => repoBody += chunk);
-              repoRes.on('end', () => {
-                if (repoRes.statusCode === 200) {
-                  resolve({ exists: true, message: 'Repository exists' });
-                } else if (repoRes.statusCode === 404) {
-                  resolve({ exists: false, message: 'Repository not found', token });
-                } else {
-                  resolve({ exists: null, message: `Unexpected response: ${repoRes.statusCode}`, token });
-                }
-              });
-            });
-            repoReq.on('error', () => resolve({ exists: null, message: 'Network error checking repository', token }));
-            repoReq.end();
-          } else {
-            resolve({ exists: null, message: authJson.detail || 'Authentication failed' });
-          }
-        } catch (e) {
-          resolve({ exists: null, message: 'Failed to parse auth response' });
-        }
-      });
-    });
-    authReq.on('error', () => resolve({ exists: null, message: 'Network error during authentication' }));
-    authReq.write(authData);
-    authReq.end();
-  });
-}
-
-async function createDockerHubRepository(username, password, repoName, token) {
-  const https = require('https');
-  
-  return new Promise((resolve) => {
-    const createData = JSON.stringify({ name: repoName, namespace: username });
-    const createReq = https.request({
-      hostname: 'hub.docker.com',
-      path: `/v2/repositories/${username}/`,
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(createData)
-      }
-    }, (createRes) => {
-      let createBody = '';
-      createRes.on('data', chunk => createBody += chunk);
-      createRes.on('end', () => {
-        if (createRes.statusCode === 201 || createRes.statusCode === 200) {
-          resolve({ created: true, message: 'Repository created successfully' });
-        } else {
-          try {
-            const errJson = JSON.parse(createBody);
-            resolve({ created: false, message: errJson.detail || `Failed to create repository (${createRes.statusCode})` });
-          } catch {
-            resolve({ created: false, message: `Failed to create repository (${createRes.statusCode})` });
-          }
-        }
-      });
-    });
-    createReq.on('error', () => resolve({ created: false, message: 'Network error creating repository' }));
-    createReq.write(createData);
-    createReq.end();
-  });
-}
-
-// =============================================================================
-// Build Container Image Endpoint
-// =============================================================================
-
     if (action === 'dockerhub') {
       if (!dockerHubUsername || !dockerHubPassword) {
         exec(`${dockerCmd} rmi ${imageName}`, () => { });
@@ -2066,76 +2114,41 @@ async function createDockerHubRepository(username, password, repoName, token) {
   }
 });
 
-app.post('/api/deploy/render', async (req, res) => {
-  const { renderApiKey, renderServiceName, renderRegion, renderBuildCmd, renderStartCmd, renderEnvVars, files, socketId, dockerHubUsername, dockerHubPassword, dockerHubRepo } = req.body;
+// =============================================================================
+// Validate Render Service Name Endpoint
+// =============================================================================
+
+app.post('/api/validate-render-service', async (req, res) => {
+  const { serviceName, renderApiKey } = req.body;
+
+  if (!serviceName) {
+    return res.status(400).json({ valid: false, reason: 'Service name is required' });
+  }
 
   if (!renderApiKey) {
-    return res.status(400).json({ error: 'Render API key is required' });
+    return res.status(400).json({ valid: false, reason: 'Render API key is required' });
   }
 
-  if (!files || typeof files !== 'object') {
-    return res.status(400).json({ error: 'Project files are required' });
-  }
+  // Validate service name format
+  const serviceNameRegex = /^[a-z]([a-z0-9-]*[a-z0-9])?$/;
+  const sanitizedName = (serviceName || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
 
-  if (!dockerHubUsername || !dockerHubPassword || !dockerHubRepo) {
-    return res.status(400).json({ error: 'Docker Hub credentials and repo name are required' });
-  }
-
-  const https = require('https');
-
-  // Helper to make Render API requests
-  const renderApiRequest = (method, path, body = null) => {
-    return new Promise((resolve, reject) => {
-      const options = {
-        hostname: 'api.render.com',
-        path: path,
-        method: method,
-        headers: {
-          'Authorization': `Bearer ${renderApiKey}`,
-          'Content-Type': 'application/json',
-          'Accept': 'application/json'
-        }
-      };
-
-      const apiReq = https.request(options, (apiRes) => {
-        let data = '';
-        apiRes.on('data', chunk => data += chunk);
-        apiRes.on('end', () => {
-          try {
-            const jsonData = JSON.parse(data);
-            resolve({ status: apiRes.statusCode, data: jsonData });
-          } catch (e) {
-            resolve({ status: apiRes.statusCode, data: data });
-          }
-        });
-      });
-
-      apiReq.on('error', (err) => reject(err));
-
-      if (body) {
-        apiReq.write(JSON.stringify(body));
-      }
-      apiReq.end();
+  if (!serviceNameRegex.test(sanitizedName) || sanitizedName.length < 3 || sanitizedName.length > 100) {
+    return res.status(400).json({
+      valid: false,
+      reason: `Invalid service name: "${serviceName}". Must start with a letter, contain only lowercase letters/numbers/hyphens, be 3-100 chars, and not end with a hyphen.`
     });
-  };
+  }
 
+  // Check if service name is already taken on Render
   try {
     const https = require('https');
-    const { exec: execSync2 } = require('child_process');
-    const { promisify } = require('util');
-    const exec = promisify(execSync2);
 
-    const dockerCmd = process.platform === 'win32' ? 'docker.exe' : 'docker';
-    const hubImageName = `${dockerHubUsername}/${dockerHubRepo}:latest`;
-    const tmpDir = path.join(os.tmpdir(), `render-deploy-${Date.now()}`);
-    fs.mkdirSync(tmpDir, { recursive: true });
-
-    // Helper to make Render API requests
-    const renderApiRequest = (method, apiPath, body = null) => {
+    const renderApiRequest = (method, path) => {
       return new Promise((resolve, reject) => {
         const options = {
           hostname: 'api.render.com',
-          path: apiPath,
+          path: path,
           method: method,
           headers: {
             'Authorization': `Bearer ${renderApiKey}`,
@@ -2158,17 +2171,218 @@ app.post('/api/deploy/render', async (req, res) => {
         });
 
         apiReq.on('error', (err) => reject(err));
-        if (body) apiReq.write(JSON.stringify(body));
         apiReq.end();
       });
     };
 
-    // Helper to emit output
-    const emitOutput = (output, isError = false) => {
-      if (socketId) {
-        io.to(socketId).emit('execution_output', { output, isError });
+    const listResponse = await renderApiRequest('GET', '/v1/services?limit=100');
+
+    if (listResponse.status === 200) {
+      const services = Array.isArray(listResponse.data) ? listResponse.data : [];
+      const existingService = services.find(s => {
+        const svc = s.service || s;
+        return svc.name === sanitizedName;
+      });
+
+      if (existingService) {
+        return res.status(409).json({
+          valid: false,
+          reason: `Service name "${sanitizedName}" already exists on Render. Choose a different name.`
+        });
       }
-    };
+    }
+
+    return res.status(200).json({ valid: true });
+  } catch (error) {
+    console.error('[Validate Service] Error:', error.message);
+    return res.status(500).json({
+      valid: false,
+      reason: `Failed to validate service name: ${error.message}`
+    });
+  }
+});
+
+app.post('/api/deploy/render', async (req, res) => {
+  const { renderApiKey, renderServiceName, renderRegion, renderBuildCmd, renderStartCmd, renderEnvVars, files, socketId, dockerHubUsername, dockerHubPassword, dockerHubRepo } = req.body;
+
+  if (!renderApiKey) {
+    return res.status(400).json({ error: 'Render API key is required' });
+  }
+
+  if (!files || typeof files !== 'object') {
+    return res.status(400).json({ error: 'Project files are required' });
+  }
+
+  // Docker Hub credentials are required for Render deployment (image is pushed to Docker Hub)
+  if (!dockerHubUsername || !dockerHubPassword) {
+    return res.status(400).json({ error: 'Docker Hub username and password are required to deploy to Render. The image will be pushed to Docker Hub first.' });
+  }
+
+  // Use provided repo name or auto-generate one
+  const rawRepoName = dockerHubRepo || '';
+  const sanitizedRepo = rawRepoName.trim().toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '') || `codeforge-${Date.now()}`;
+
+  const https = require('https');
+
+  // Helper to make Render API requests
+  const renderApiRequest = (method, path, body = null) => {
+    return new Promise((resolve, reject) => {
+      const options = {
+        hostname: 'api.render.com',
+        path: path,
+        method: method,
+        headers: {
+          'Authorization': `Bearer ${renderApiKey}`,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        }
+      };
+
+      // Add Content-Length if we have a body
+      let bodyString = '';
+      if (body) {
+        bodyString = JSON.stringify(body);
+        options.headers['Content-Length'] = Buffer.byteLength(bodyString);
+        console.log('[Render API] Sending body:', bodyString);
+      }
+
+      const apiReq = https.request(options, (apiRes) => {
+        let data = '';
+        apiRes.on('data', chunk => data += chunk);
+        apiRes.on('end', () => {
+          try {
+            const jsonData = JSON.parse(data);
+            resolve({ status: apiRes.statusCode, data: jsonData });
+          } catch (e) {
+            resolve({ status: apiRes.statusCode, data: data });
+          }
+        });
+      });
+
+      apiReq.on('error', (err) => reject(err));
+
+      if (body) {
+        apiReq.write(bodyString);
+      }
+      apiReq.end();
+    });
+  };
+
+  // Helper: emit output to socket (defined at function scope so catch block can use it)
+  const emitOutput = (output, isError = false) => {
+    if (socketId) {
+      io.to(socketId).emit('execution_output', { output, isError });
+    }
+  };
+
+  console.log('[Render Deploy] ====== START ======');
+  console.log('[Render Deploy] Service:', renderServiceName);
+  console.log('[Render Deploy] DockerHub:', dockerHubUsername, '/', sanitizedRepo);
+  console.log('[Render Deploy] Files received:', Object.keys(files || {}).length);
+  if (socketId) {
+    io.to(socketId).emit('execution_output', { output: `📦 Docker Hub repo: ${dockerHubUsername}/${sanitizedRepo}\n` });
+  }
+
+  try {
+    const { exec: execSync2 } = require('child_process');
+    const { promisify } = require('util');
+    const exec = promisify(execSync2);
+
+    // Find working docker executable via shell (inherits full system PATH)
+    console.log('[Render Deploy] Step 1: Detecting Docker...');
+    const isWin = process.platform === 'win32';
+    const dockerCandidates = isWin
+      ? ['docker.exe', 'docker', 'C:\\Program Files\\Docker\\Docker\\resources\\bin\\docker.exe', 'C:\\ProgramData\\DockerDesktop\\version-bin\\docker.exe']
+      : ['docker'];
+    let dockerCmd = dockerCandidates[0];
+    for (const cmd of dockerCandidates) {
+      try {
+        execSync(`${cmd} info`, { stdio: 'pipe', timeout: 8000, shell: true });
+        dockerCmd = cmd;
+        console.log('[Render Deploy] Docker found:', cmd);
+        break;
+      } catch (e) {
+        console.log('[Render Deploy] Docker not accessible with:', cmd, '-', e.message.substring(0, 100));
+      }
+    }
+
+    // Verify docker is actually accessible
+    try {
+      execSync(`${dockerCmd} info`, { stdio: 'pipe', timeout: 10000, shell: true });
+      console.log('[Render Deploy] Docker daemon verified OK');
+    } catch (dockerErr) {
+      const dockerErrMsg = dockerErr.message || '';
+      console.log('[Render Deploy] FATAL: Docker daemon not accessible:', dockerErrMsg.substring(0, 200));
+      return res.status(500).json({
+        error: 'Docker is not running or not accessible',
+        hint: 'Make sure Docker Desktop is running. Restart it if needed.',
+        details: dockerErrMsg.substring(0, 300)
+      });
+    }
+
+    // Validate and check service name
+    const serviceNameRegex = /^[a-z]([a-z]([a-z0-9-]*[a-z0-9])?)?$/;
+    const sanitizedName = (renderServiceName || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+    console.log('[Render Deploy] Step 2: Validating service name - raw:', renderServiceName, '-> sanitized:', sanitizedName);
+
+    if (!renderServiceName || !renderServiceName.trim()) {
+      return res.status(400).json({ error: 'Service name is required' });
+    }
+
+    if (!serviceNameRegex.test(sanitizedName)) {
+      return res.status(400).json({
+        error: `Invalid service name: "${renderServiceName}"`,
+        details: 'Service name must: start with a letter, contain only lowercase letters/numbers/hyphens, be 3-100 chars, and not end with a hyphen. Suggested: ' + sanitizedName
+      });
+    }
+
+    if (sanitizedName.length < 3) {
+      return res.status(400).json({ error: 'Service name must be at least 3 characters' });
+    }
+
+    // Check if service name is already taken by listing existing services
+    emitOutput(`🔎 Checking if "${sanitizedName}" is available...\n`);
+    try {
+      const listResponse = await renderApiRequest('GET', '/v1/services?limit=100');
+      if (listResponse.status === 200) {
+        const services = Array.isArray(listResponse.data) ? listResponse.data : [];
+        const existingService = services.find(s => {
+          const svc = s.service || s;
+          return svc.name === sanitizedName;
+        });
+
+        if (existingService) {
+          const svc = existingService.service || existingService;
+          emitOutput(`⚠️ Service "${sanitizedName}" already exists\n`);
+          return res.status(409).json({
+            error: `Service name "${sanitizedName}" is already taken`,
+            existingService: true,
+            dashboardUrl: `https://dashboard.render.com/web/${svc.id}`,
+            hint: 'Choose a different service name, or update the existing service instead.'
+          });
+        }
+        emitOutput(`✅ Service name "${sanitizedName}" is available\n`);
+      }
+    } catch (checkErr) {
+      // Non-fatal: continue anyway, Render will reject duplicate on create
+      emitOutput(`⚠️ Could not check service name availability\n`);
+    }
+
+    const hubImageName = `${dockerHubUsername}/${sanitizedRepo}:latest`;
+    const tmpDir = path.join(os.tmpdir(), `render-deploy-${Date.now()}`);
+    fs.mkdirSync(tmpDir, { recursive: true });
+
+    console.log('[Render Deploy] Step 3: Writing files to temp dir:', tmpDir);
+    emitOutput(`📝 Writing project files to ${tmpDir}...\n`);
+    const fileNames = Object.keys(files);
+    for (const [pFile, content] of Object.entries(files)) {
+      const fullPath = path.join(tmpDir, pFile);
+      const dir = path.dirname(fullPath);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(fullPath, content || '');
+    }
+    emitOutput(`✅ ${fileNames.length} files written\n`);
+    console.log('[Render Deploy] Files written:', fileNames.join(', '));
 
     // Helper to run shell commands (sync with timeout)
     const runCmd = (cmd) => {
@@ -2202,21 +2416,56 @@ app.post('/api/deploy/render', async (req, res) => {
 
     emitOutput(`🚀 Deploying to Render.com via Docker Hub...\n`);
 
-    // Step 1: Write project files
-    emitOutput('📝 Writing project files...\n');
-    const fileNames = Object.keys(files);
-    for (const [pFile, content] of Object.entries(files)) {
-      const fullPath = path.join(tmpDir, pFile);
-      const dir = path.dirname(fullPath);
-      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(fullPath, content || '');
-    }
-    emitOutput(`✅ ${fileNames.length} files written\n`);
+    // Step 1: Write project files (done above at Step 3)
 
-    // Step 2: Build Docker image
-    emitOutput('🐳 Building Docker image...\n');
+    // Create .dockerignore to exclude problematic files
+    const dockerignore = `# Git
+.git
+.gitignore
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Dependencies (will be reinstalled in container)
+node_modules
+__pycache__
+*.pyc
+.env
+*.log
+
+# Docker
+Dockerfile*
+docker-compose*
+.dockerignore
+
+# Misc
+README.md
+*.tar
+*.zip
+*~
+`;
+    fs.writeFileSync(path.join(tmpDir, '.dockerignore'), dockerignore);
+    emitOutput(`📄 Added .dockerignore\n`);
+
+    // Debug: list files in build dir
+    const tmpFiles = fs.readdirSync(tmpDir);
+    emitOutput(`📂 Build dir contents: ${tmpFiles.join(', ')}\n`);
+    console.log('[Render Deploy] Build dir contents:', tmpFiles);
+
+    // Step 4: Build Docker image
+    console.log('[Render Deploy] Step 4: Building Docker image...');
+    emitOutput('🐳 Building Docker image (this may take a minute)...\n');
     const imageName = `codeforge-${Date.now()}`;
+    console.log('[Render Deploy] Image name:', imageName);
     const dockerfileContent = files['Dockerfile'] || files['Dockerfile.dockerfile'] || null;
+    console.log('[Render Deploy] Dockerfile:', dockerfileContent ? 'provided' : 'auto-generate');
 
     if (!dockerfileContent) {
       // Auto-generate Dockerfile
@@ -2232,9 +2481,142 @@ app.post('/api/deploy/render', async (req, res) => {
       let dockerfile;
       if (hasPy) {
         const pythonVersion = files['requirements.txt'] ? 'python:3.11-slim' : 'python:3.11-alpine';
-        dockerfile = `FROM ${pythonVersion}\nWORKDIR /app\nCOPY . .\nRUN pip install -r requirements.txt\nEXPOSE 10000\nCMD ["python", "app.py"]`;
+
+        // Scan Python file contents to detect framework
+        const pyContent = fileNames
+          .filter(f => f.endsWith('.py'))
+          .map(f => files[f] || '')
+          .join('\n');
+
+        // Check for Flask
+        const isFlask = pyContent.includes('from flask import') || pyContent.includes('Flask(');
+        // Check for FastAPI
+        const isFastAPI = pyContent.includes('from fastapi import') || pyContent.includes('FastAPI(');
+        // Check for Django
+        const isDjango = pyContent.includes('from django import') || pyContent.includes('django.setup()');
+        // Check for Streamlit
+        const isStreamlit = pyContent.includes('import streamlit') || pyContent.includes('st.set_page_config');
+        // Check for HTML templates (Flask template rendering)
+        const hasTemplates = fileNames.some(f => f.endsWith('.html') || f.includes('templates/'));
+
+        // Find main entry file
+        const mainPy = fileNames.find(f => {
+          const name = f.split('/').pop();
+          return name === 'app.py' || name === 'main.py';
+        }) || fileNames.find(f => f.endsWith('.py')) || 'app.py';
+
+        // Check if user has a start.sh or run.sh
+        const hasStartScript = fileNames.some(f => f === 'start.sh' || f === 'run.sh' || f === 'start.bat');
+
+        if (isFlask) {
+          // Flask: create a startup wrapper that forces 0.0.0.0 and reads PORT env
+          const startupScript = `#!/bin/sh
+PORT=${"$"}{PORT:-10000}
+HOST="0.0.0.0"
+
+# Patch the app to use 0.0.0.0 if it hardcodes 127.0.0.1 or localhost
+# by running it with gunicorn for production-grade deployment
+if [ -f requirements.txt ] && grep -qi gunicorn requirements.txt 2>/dev/null; then
+  echo "Starting Flask with Gunicorn on $HOST:$PORT..."
+  exec gunicorn --bind $HOST:$PORT app:app
+else
+  echo "Starting Flask on $HOST:$PORT..."
+  # Use Flask's built-in server with host=0.0.0.0
+  # We inject 'host=os.environ.get("HOST", "0.0.0.0")' into the app.run call
+  exec python -c "
+import os, sys
+sys.path.insert(0, '.')
+port = int(os.environ.get('PORT', 10000))
+host = '0.0.0.0'
+
+# Import and patch
+import app
+original_run = getattr(app.app, 'run', None)
+if original_run:
+    def patched_run(**kwargs):
+        kwargs.setdefault('host', host)
+        kwargs.setdefault('port', port)
+        return original_run(**kwargs)
+    app.app.run = patched_run
+else:
+    # fallback: run via flask CLI
+    os.environ['FLASK_RUN_HOST'] = host
+    os.environ['FLASK_RUN_PORT'] = str(port)
+
+if hasattr(app, 'app'):
+    app.app.run(host=host, port=port, debug=False)
+else:
+    import os; os.environ['HOST']=host; os.environ['PORT']=str(port)
+    exec(open('${mainPy}').read())
+"
+fi
+`;
+          fs.writeFileSync(path.join(tmpDir, 'start.sh'), startupScript);
+          if (process.platform !== 'win32') {
+            fs.chmodSync(path.join(tmpDir, 'start.sh'), 0o755);
+          }
+
+          // Add Flask to requirements if not present
+          let reqContent = files['requirements.txt'] || '';
+          if (!reqContent.toLowerCase().includes('flask')) {
+            reqContent += '\nFlask>=2.3.0\n';
+          }
+          // ✅ Always add gunicorn for production Flask deployment
+          if (!reqContent.toLowerCase().includes('gunicorn')) {
+            reqContent += 'gunicorn>=20.0.0\n';
+          }
+          fs.writeFileSync(path.join(tmpDir, 'requirements.txt'), reqContent);
+
+          // Extract app module from entry file (e.g., app.py -> app)
+          const appModule = mainPy.replace('.py', '');
+
+          // ✅ Always use gunicorn with dynamic app module name
+          dockerfile = `FROM ${pythonVersion}\nWORKDIR /app\nCOPY requirements.txt .\nRUN pip install --no-cache-dir -r requirements.txt\nCOPY . .\nENV PORT=10000\nEXPOSE 10000\nCMD ["gunicorn", "--bind", "0.0.0.0:10000", "${appModule}:app"]`;
+        } else if (isFastAPI) {
+          // FastAPI: use uvicorn with 0.0.0.0
+          const fastApiModule = mainPy.replace('.py', '') + ':app';
+          let fastApiReqs = files['requirements.txt'] || '';
+          if (!fastApiReqs.toLowerCase().includes('fastapi')) {
+            fastApiReqs += '\nfastapi>=0.100.0\nuvicorn[standard]>=0.23.0\n';
+            fs.writeFileSync(path.join(tmpDir, 'requirements.txt'), fastApiReqs);
+          }
+          dockerfile = `FROM ${pythonVersion}\nWORKDIR /app\nCOPY requirements.txt .\nRUN pip install --no-cache-dir -r requirements.txt\nCOPY . .\nENV PORT=10000\nEXPOSE 10000\nCMD ["uvicorn", "${fastApiModule}", "--host", "0.0.0.0", "--port", "10000"]`;
+        } else if (isDjango) {
+          let djangoReqs = files['requirements.txt'] || '';
+          if (!djangoReqs.toLowerCase().includes('django')) {
+            djangoReqs += '\nDjango>=4.2.0\ngunicorn>=21.0.0\n';
+            fs.writeFileSync(path.join(tmpDir, 'requirements.txt'), djangoReqs);
+          }
+          dockerfile = `FROM ${pythonVersion}\nWORKDIR /app\nCOPY requirements.txt .\nRUN pip install --no-cache-dir -r requirements.txt\nCOPY . .\nENV PORT=10000\nENV PYTHONUNBUFFERED=1\nEXPOSE 10000\nCMD ["gunicorn", "--bind", "0.0.0.0:10000", "codeforge.wsgi:application"]`;
+        } else if (isStreamlit) {
+          let streamlitReqs = files['requirements.txt'] || '';
+          if (!streamlitReqs.toLowerCase().includes('streamlit')) {
+            streamlitReqs += '\nstreamlit>=1.28.0\n';
+            fs.writeFileSync(path.join(tmpDir, 'requirements.txt'), streamlitReqs);
+          }
+          dockerfile = `FROM ${pythonVersion}\nWORKDIR /app\nCOPY requirements.txt .\nRUN pip install --no-cache-dir -r requirements.txt\nCOPY . .\nENV PORT=10000\nEXPOSE 10000\nCMD ["streamlit", "run", "${mainPy}", "--server.port=10000", "--server.address=0.0.0.0"]`;
+        } else {
+          // Generic Python: try to detect if it reads PORT env or use start script
+          if (hasStartScript) {
+            dockerfile = `FROM ${pythonVersion}\nWORKDIR /app\nCOPY . .\nENV PORT=10000\nEXPOSE 10000\nCMD ["sh", "start.sh"]`;
+          } else {
+            // Try to run the main file; if it reads PORT env, great
+            dockerfile = `FROM ${pythonVersion}\nWORKDIR /app\nCOPY . .\nENV PORT=10000\nEXPOSE 10000\nCMD ["sh", "-c", "python ${mainPy} --port=$PORT || python ${mainPy}"]`;
+          }
+        }
       } else if (hasNode) {
-        dockerfile = `FROM node:18-alpine\nWORKDIR /app\nCOPY package*.json ./\nRUN npm ci --omit=dev\nCOPY . .\nEXPOSE 10000\nCMD ["node", "index.js"]`;
+        // Check if package.json has a start script
+        const pkgJson = files['package.json'] ? JSON.parse(files['package.json']) : null;
+        const hasStartScript = pkgJson?.scripts?.start;
+        const mainFile = fileNames.find(f => {
+          const name = f.split('/').pop();
+          return name === 'index.js';
+        }) || fileNames.find(f => f.endsWith('.js')) || 'index.js';
+        if (hasStartScript) {
+          dockerfile = `FROM node:18-alpine\nWORKDIR /app\nCOPY package*.json ./\nRUN npm ci --omit=dev\nCOPY . .\nENV PORT=10000\nEXPOSE 10000\nCMD ["sh", "-c", "npm start"]`;
+        } else {
+          dockerfile = `FROM node:18-alpine\nWORKDIR /app\nCOPY package*.json ./\nRUN npm ci --omit=dev\nCOPY . .\nENV PORT=10000\nEXPOSE 10000\nCMD ["sh", "-c", "node ${mainFile}"]`;
+        }
       } else if (hasJava) {
         dockerfile = `FROM eclipse-temurin:17-jdk-alpine\nWORKDIR /app\nCOPY . .\nRUN javac *.java\nEXPOSE 10000\nCMD ["java", "Main"]`;
       } else if (hasGo) {
@@ -2244,9 +2626,11 @@ app.post('/api/deploy/render', async (req, res) => {
       } else if (hasRuby) {
         dockerfile = `FROM ruby:3.2-alpine\nWORKDIR /app\nCOPY . .\nRUN bundle install\nEXPOSE 10000\nCMD ["bundle", "exec", "ruby", "app.rb"]`;
       } else {
-        dockerfile = `FROM node:18-alpine\nWORKDIR /app\nCOPY . .\nEXPOSE 10000\nCMD ["node", "index.js"]`;
+        const mainFile = fileNames.find(f => f.endsWith('.js')) || 'index.js';
+        dockerfile = `FROM node:18-alpine\nWORKDIR /app\nCOPY . .\nEXPOSE 10000\nCMD ["node", "${mainFile}"]`;
       }
 
+      emitOutput(`📝 Dockerfile:\n${dockerfile.split('\n').map(l => '   ' + l).join('\n')}\n`);
       fs.writeFileSync(path.join(tmpDir, 'Dockerfile'), dockerfile);
       const langName = hasPy ? 'Python' : (hasNode ? 'Node.js' : (hasJava ? 'Java' : (hasGo ? 'Go' : (hasCpp ? 'C++' : (hasRuby ? 'Ruby' : 'Node.js')))));
       emitOutput(`✅ Generated ${langName} Dockerfile\n`);
@@ -2255,32 +2639,67 @@ app.post('/api/deploy/render', async (req, res) => {
     }
 
     // Build the image
-    const buildResult = await spawnCmd(dockerCmd, ['build', '-t', imageName, '.']);
+    console.log('[Render Deploy] Step 5: Running docker build...');
+    emitOutput(`🔨 Running: docker build -t ${imageName} .\n`);
+    const buildResult = await spawnCmd(dockerCmd, ['build', '-t', imageName, '.'], tmpDir);
     if (buildResult.code !== 0) {
-      emitOutput(`❌ Docker build failed:\n${buildResult.output}\n`, true);
+      const buildOutput = buildResult.output.substring(0, 3000);
+      console.log('[Render Deploy] FATAL: Docker build failed. Exit code:', buildResult.code);
+      console.log('[Render Deploy] Build output (first 500 chars):', buildOutput.substring(0, 500));
+      emitOutput(`❌ Docker build failed:\n${buildOutput}\n`, true);
       fs.rmSync(tmpDir, { recursive: true, force: true });
-      return res.status(500).json({ error: 'Docker build failed' });
+      return res.status(500).json({ error: 'Docker build failed', details: buildOutput });
     }
+    console.log('[Render Deploy] Docker image built successfully');
     emitOutput('✅ Docker image built\n');
 
-    // Step 3: Tag for Docker Hub
+    // Step 5: Tag for Docker Hub
+    console.log('[Render Deploy] Step 6: Tagging image for Docker Hub:', hubImageName);
     emitOutput('🏷️ Tagging for Docker Hub...\n');
     const tagResult = await runCmd(`${dockerCmd} tag ${imageName} ${hubImageName}`);
     if (tagResult.err) {
+      const tagErr = (tagResult.stderr || tagResult.stdout || tagResult.err.message || '').substring(0, 500);
+      console.log('[Render Deploy] FATAL: Docker tag failed:', tagErr);
       exec(`${dockerCmd} rmi ${imageName}`, () => { });
       fs.rmSync(tmpDir, { recursive: true, force: true });
-      return res.status(500).json({ error: 'Failed to tag image' });
+      return res.status(500).json({ error: 'Failed to tag image', details: tagErr });
     }
     emitOutput(`✅ Tagged as ${hubImageName}\n`);
 
-    // Step 4: Push to Docker Hub
+    // Step 4: Check/create Docker Hub repository
+    console.log('[Render Deploy] Step 7: Checking Docker Hub repository:', sanitizedRepo);
+    emitOutput('📦 Checking Docker Hub repository...\n');
+    const repoCheck = await checkDockerHubRepository(dockerHubUsername, dockerHubPassword, sanitizedRepo);
+    
+    if (repoCheck.exists === null) {
+      console.log('[Render Deploy] Docker Hub repo check inconclusive:', repoCheck.message);
+      emitOutput(`⚠️ Could not verify repo (${repoCheck.message}), trying anyway...\n`);
+    } else if (repoCheck.exists === false) {
+      console.log('[Render Deploy] Docker Hub repo does not exist, creating...');
+      emitOutput('📦 Repository does not exist, creating...\n');
+      const repoCreate = await createDockerHubRepository(dockerHubUsername, dockerHubPassword, sanitizedRepo, repoCheck.token);
+      if (!repoCreate.created) {
+        console.log('[Render Deploy] Docker Hub repo create failed:', repoCreate.message);
+        emitOutput(`⚠️ Repo create failed: ${repoCreate.message}, trying push anyway...\n`);
+      } else {
+        emitOutput(`✅ Repository created on Docker Hub\n`);
+      }
+    } else {
+      console.log('[Render Deploy] Docker Hub repo exists');
+      emitOutput(`✅ Repository exists on Docker Hub\n`);
+    }
+
+    // Step 5: Push to Docker Hub
+    console.log('[Render Deploy] Step 8: Logging into Docker Hub and pushing...');
     emitOutput('⬆️ Pushing to Docker Hub...\n');
     const loginResult = await runCmd(`${dockerCmd} login -u ${dockerHubUsername} -p ${dockerHubPassword}`);
     if (loginResult.err) {
+      const loginErr = (loginResult.stderr || loginResult.stdout || '').substring(0, 300);
+      console.log('[Render Deploy] FATAL: Docker Hub login failed:', loginErr);
       exec(`${dockerCmd} rmi ${imageName} ${hubImageName}`, () => { });
       fs.rmSync(tmpDir, { recursive: true, force: true });
-      emitOutput(`❌ Docker Hub login failed: ${loginResult.stderr}\n`, true);
-      return res.status(500).json({ error: 'Docker Hub login failed' });
+      emitOutput(`❌ Docker Hub login failed: ${loginErr}\n`, true);
+      return res.status(500).json({ error: 'Docker Hub login failed', details: loginErr });
     }
     emitOutput('✅ Logged in to Docker Hub\n');
 
@@ -2290,47 +2709,106 @@ app.post('/api/deploy/render', async (req, res) => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
 
     if (pushResult.code !== 0) {
-      emitOutput(`❌ Docker Hub push failed:\n${pushResult.output}\n`, true);
-      return res.status(500).json({ error: 'Docker Hub push failed' });
+      const pushErr = (pushResult.output || '').substring(0, 500);
+      console.log('[Render Deploy] FATAL: Docker Hub push failed:', pushErr);
+      emitOutput(`❌ Docker Hub push failed:\n${pushErr}\n`, true);
+      return res.status(500).json({ error: 'Docker Hub push failed', details: pushErr });
     }
+    console.log('[Render Deploy] Pushed to Docker Hub:', hubImageName);
     emitOutput(`✅ Pushed to Docker Hub: ${hubImageName}\n`);
 
-    // Step 5: Deploy to Render using Docker image
+    // Step 9: Deploy to Render using Docker image
+    console.log('[Render Deploy] Step 9: Deploying to Render...');
     emitOutput('🚀 Deploying to Render.com...\n');
 
     // Get owner ID
+    console.log('[Render Deploy] Fetching Render owner ID...');
     const ownerResponse = await renderApiRequest('GET', '/v1/owners');
+    console.log('[Render Deploy] Owner response status:', ownerResponse.status);
     if (ownerResponse.status !== 200) {
-      emitOutput(`❌ Failed to get Render account: ${ownerResponse.data?.message || ownerResponse.data}\n`, true);
-      return res.status(400).json({ error: `Failed to get Render account: ${ownerResponse.data?.message}` });
+      const ownerErr = typeof ownerResponse.data === 'string' ? ownerResponse.data.substring(0, 200) : JSON.stringify(ownerResponse.data).substring(0, 200);
+      console.log('[Render Deploy] FATAL: Failed to get Render account:', ownerErr);
+      emitOutput(`❌ Failed to get Render account: ${ownerResponse.data?.message || ownerErr}\n`, true);
+      return res.status(400).json({ error: `Failed to get Render account: ${ownerResponse.data?.message || ownerErr}` });
     }
     const owners = Array.isArray(ownerResponse.data) ? ownerResponse.data : [];
     const ownerId = owners[0]?.id || owners[0]?.owner?.id;
+    console.log('[Render Deploy] Owner ID:', ownerId);
     if (!ownerId) {
+      console.log('[Render Deploy] FATAL: No owner ID found in response');
       emitOutput(`❌ Could not determine Render account ID\n`, true);
       return res.status(400).json({ error: 'Could not determine Render account ID' });
     }
     emitOutput(`✅ Account: ${owners[0]?.name || owners[0]?.email || ownerId}\n`);
 
     // Check for existing service
+    console.log('[Render Deploy] Step 10: Listing existing services...');
     emitOutput('📋 Checking for existing services...\n');
     const listResponse = await renderApiRequest('GET', '/v1/services?limit=100');
+    console.log('[Render Deploy] List services status:', listResponse.status);
     if (listResponse.status !== 200) {
+      const listErr = typeof listResponse.data === 'string' ? listResponse.data.substring(0, 200) : JSON.stringify(listResponse.data).substring(0, 200);
+      console.log('[Render Deploy] FATAL: Failed to list services:', listErr);
       emitOutput(`❌ ${listResponse.data?.message || 'Failed to list services'}\n`, true);
-      return res.status(400).json({ error: listResponse.data?.message || 'Failed to list Render services' });
+      return res.status(400).json({ error: listResponse.data?.message || 'Failed to list Render services', details: listErr });
     }
 
     const services = Array.isArray(listResponse.data) ? listResponse.data : [];
     const existingService = services.find(s => {
       const service = s.service || s;
-      return service.name === renderServiceName;
+      return service.name === sanitizedName;
     });
+    console.log('[Render Deploy] Existing service:', existingService ? 'found (will update)' : 'none (will create)');
 
     const envVars = (renderEnvVars || []).map(ev => ({ key: ev.key, value: ev.value }));
     const plan = 'free';
     const region = renderRegion || 'oregon';
-    const buildCommand = renderBuildCmd || '';
-    const startCommand = renderStartCmd || '';
+
+    // Auto-detect framework and generate start command if not provided
+    let buildCommand = renderBuildCmd || '';
+    let startCommand = renderStartCmd || '';
+
+    if (!startCommand) {
+      // Detect framework from files
+      const fileKeys = Object.keys(files);
+      const hasPackageJson = fileKeys.includes('package.json');
+      const pythonFiles = fileKeys.filter(f => f.endsWith('.py'));
+      const hasPython = pythonFiles.length > 0;
+      const hasRequirements = fileKeys.includes('requirements.txt');
+      const fileContent = Object.values(files).join(' ').toLowerCase();
+
+      console.log('[Render Deploy] Auto-detecting framework for start command...');
+
+      if (hasPackageJson) {
+        // Node.js
+        console.log('[Render Deploy] Detected: Node.js');
+        startCommand = 'npm start';
+        if (!buildCommand) buildCommand = 'npm install';
+      } else if (fileContent.includes('flask') || fileContent.includes('from flask import')) {
+        // Flask
+        console.log('[Render Deploy] Detected: Flask');
+        startCommand = 'gunicorn app:app';
+        if (!buildCommand && hasRequirements) buildCommand = 'pip install -r requirements.txt';
+      } else if (fileContent.includes('fastapi') || fileContent.includes('uvicorn')) {
+        // FastAPI
+        console.log('[Render Deploy] Detected: FastAPI');
+        const mainPy = pythonFiles.find(f => f.includes('main')) || pythonFiles[0] || 'main.py';
+        const moduleEntry = mainPy.replace('.py', '') + ':app';
+        startCommand = `uvicorn ${moduleEntry} --host 0.0.0.0 --port 10000`;
+        if (!buildCommand && hasRequirements) buildCommand = 'pip install -r requirements.txt';
+      } else if (hasPython) {
+        // Generic Python
+        console.log('[Render Deploy] Detected: Python');
+        const mainPy = pythonFiles.find(f => f.includes('main') || f.includes('app')) || pythonFiles[0] || 'app.py';
+        startCommand = `python ${mainPy}`;
+        if (!buildCommand && hasRequirements) buildCommand = 'pip install -r requirements.txt';
+      }
+
+      console.log('[Render Deploy] Auto-detected start command:', startCommand);
+      if (buildCommand) console.log('[Render Deploy] Auto-detected build command:', buildCommand);
+      emitOutput(`⚙️ Start command: ${startCommand}\n`);
+      if (buildCommand) emitOutput(`⚙️ Build command: ${buildCommand}\n`);
+    }
 
     let serviceId;
     let serviceUrl;
@@ -2339,8 +2817,9 @@ app.post('/api/deploy/render', async (req, res) => {
       // Update existing service with Docker image
       const service = existingService.service || existingService;
       serviceId = service.id;
-      serviceUrl = service.serviceDetails?.url || `https://${renderServiceName}.onrender.com`;
-      emitOutput(`📝 Found existing service: ${renderServiceName}\n`);
+      serviceUrl = service.serviceDetails?.url || `https://${sanitizedName}.onrender.com`;
+      console.log('[Render Deploy] Updating existing service:', serviceId, 'with image:', hubImageName);
+      emitOutput(`📝 Found existing service: ${sanitizedName}\n`);
       emitOutput('🔄 Updating service...\n');
 
       const updateBody = {
@@ -2364,41 +2843,49 @@ app.post('/api/deploy/render', async (req, res) => {
       emitOutput('✅ Service updated\n');
     } else {
       // Create new Docker-backed service
+      console.log('[Render Deploy] Step 11: Creating new service:', sanitizedName, 'image:', hubImageName);
       emitOutput('🆕 Creating new Docker web service...\n');
 
       const createBody = {
         type: 'web_service',
-        name: renderServiceName,
+        name: sanitizedName,
         ownerId: ownerId,
         image: {
-          ownerId: '',
-          imagePath: hubImageName,
+          imagePath: hubImageName
         },
         serviceDetails: {
           plan: plan,
           region: region,
+          runtime: 'image',
           envVars: envVars
         }
       };
+      console.log('[Render Deploy] Create body:', JSON.stringify(createBody, null, 2));
 
       const createResponse = await renderApiRequest('POST', '/v1/services', createBody);
+      console.log('[Render Deploy] Create response status:', createResponse.status);
+      console.log('[Render Deploy] Create response data:', JSON.stringify(createResponse.data, null, 2));
       if (createResponse.status !== 200 && createResponse.status !== 201) {
         const errorMsg = typeof createResponse.data === 'object' ? (createResponse.data?.message || JSON.stringify(createResponse.data)) : createResponse.data;
+        console.log('[Render Deploy] FATAL: Service creation failed:', errorMsg);
         emitOutput(`❌ ${errorMsg}\n`, true);
         return res.status(400).json({ error: errorMsg });
       }
 
       const created = createResponse.data;
       serviceId = created?.id || created?.service?.id;
-      serviceUrl = created?.serviceDetails?.url || created?.url || `https://${renderServiceName}.onrender.com`;
+      serviceUrl = created?.serviceDetails?.url || created?.url || `https://${sanitizedName}.onrender.com`;
+      console.log('[Render Deploy] Service created:', serviceId, 'URL:', serviceUrl);
       emitOutput('✅ Service created\n');
     }
 
-    // Step 6: Trigger deploy
+    // Step 12: Trigger deploy
+    console.log('[Render Deploy] Step 12: Triggering deploy for service:', serviceId);
     emitOutput('🚀 Triggering deployment...\n');
     const deployResponse = await renderApiRequest('POST', `/v1/services/${serviceId}/deploys`, {
       clearCache: false
     });
+    console.log('[Render Deploy] Deploy trigger status:', deployResponse.status);
 
     if (deployResponse.status !== 200 && deployResponse.status !== 201) {
       emitOutput('⚠️ Warning: Failed to trigger deploy\n', true);
@@ -2431,7 +2918,7 @@ app.post('/api/deploy/render', async (req, res) => {
                 const url = statusResponse.data?.serviceDetails?.url || serviceUrl;
                 emitOutput(`\n🎉 Deployment successful!\n`);
                 emitOutput(`🌐 Live at: ${url}\n`);
-                return res.json({ success: true, message: `Deployed to Render: ${renderServiceName}`, url, serviceId });
+                return res.json({ success: true, message: `Deployed to Render: ${sanitizedName}`, url, serviceId });
               }
 
               if (deployStatus === 'build_failed' || deployStatus === 'update_failed' || deployStatus === 'deactivated') {
@@ -2457,12 +2944,15 @@ app.post('/api/deploy/render', async (req, res) => {
       });
     }
 
-    const url = serviceUrl || `https://${renderServiceName}.onrender.com`;
-    return res.json({ success: true, message: `Deployed to Render: ${renderServiceName}`, url, serviceId });
+    const url = serviceUrl || `https://${sanitizedName}.onrender.com`;
+    return res.json({ success: true, message: `Deployed to Render: ${sanitizedName}`, url, serviceId });
 
   } catch (error) {
-    emitOutput(`❌ Render deployment error: ${error.message}\n`, true);
-    return res.status(500).json({ error: error.message });
+    console.error('[Render Deploy] ====== FATAL ERROR ======');
+    console.error('[Render Deploy] Error:', error.message);
+    console.error('[Render Deploy] Stack:', error.stack);
+    try { emitOutput(`❌ Render deployment error: ${error.message}\n`, true); } catch (e) { /* socket may have disconnected */ }
+    return res.status(500).json({ error: error.message, stack: error.stack?.split('\n').slice(0, 3).join('\n') });
   }
 });
 

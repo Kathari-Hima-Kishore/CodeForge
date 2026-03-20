@@ -58,6 +58,7 @@ export function IdeHeader() {
   const [renderManualCmds, setRenderManualCmds] = useState(false);
   const [deploying, setDeploying] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [errorModal, setErrorModal] = useState<{ open: boolean; message: string }>({ open: false, message: '' });
   const deployAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -71,7 +72,7 @@ export function IdeHeader() {
   }, []);
 
   const fetchDockerHubRepos = useCallback(async () => {
-    if (!dockerHubUsername || !dockerHubPassword || deployAction !== 'dockerhub') return;
+    if (!dockerHubUsername || !dockerHubPassword) return;
     setIsLoadingDockerHubRepos(true);
     setDockerHubReposError('');
     setDockerHubRepos([]);
@@ -95,7 +96,33 @@ export function IdeHeader() {
     } finally {
       setIsLoadingDockerHubRepos(false);
     }
-  }, [dockerHubUsername, dockerHubPassword, deployAction]);
+  }, [dockerHubUsername, dockerHubPassword]);
+
+  const validateRenderServiceName = useCallback(async (serviceName: string): Promise<boolean> => {
+    if (!serviceName || !renderApiKey) {
+      setErrorModal({ open: true, message: 'Service name and Render API key are required' });
+      return false;
+    }
+
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/validate-render-service`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ serviceName, renderApiKey })
+      });
+      const data = await res.json();
+
+      if (!data.valid) {
+        setErrorModal({ open: true, message: data.reason || 'Invalid service name' });
+        return false;
+      }
+
+      return true;
+    } catch (err) {
+      setErrorModal({ open: true, message: `Failed to validate service name: ${err instanceof Error ? err.message : 'Unknown error'}` });
+      return false;
+    }
+  }, [renderApiKey]);
 
   const participantCount = session ? Object.keys(session.participants).length : 0;
 
@@ -196,6 +223,14 @@ export function IdeHeader() {
 
       // Render deployment - direct from source, no Docker Hub
       if (deployAction === 'render') {
+        // Validate service name first
+        const finalServiceName = renderServiceName || session?.name?.toLowerCase().replace(/[^a-z0-9]/g, '-') || 'codeforge-project';
+        const isValid = await validateRenderServiceName(finalServiceName);
+        if (!isValid) {
+          setDeploying(false);
+          return;
+        }
+
         addOutput('info', '🔍 Deploying to Render.com...');
 
         const controller = new AbortController();
@@ -215,7 +250,7 @@ export function IdeHeader() {
               renderEnvVars: renderEnvVars.filter(v => v.key.trim()).map(v => ({ key: v.key, value: v.value })),
               dockerHubUsername: dockerHubActualUsername || dockerHubUsername,
               dockerHubPassword: dockerHubPassword,
-              dockerHubRepo: dockerHubCustomRepo || selectedDockerHubRepo || session?.name || 'codeforge-project',
+              dockerHubRepo: dockerHubCustomRepo || selectedDockerHubRepo || `codeforge-${Date.now()}`,
               files: nonFolderFiles,
               socketId: null
             }),
@@ -233,7 +268,11 @@ export function IdeHeader() {
           }
 
           if (!renderResponse.ok) {
+            const details = result.details || '';
             addOutput('error', `❌ Render deployment failed: ${result.error}`);
+            if (details) {
+              addOutput('error', `📋 Build output: ${details.substring(0, 300)}`);
+            }
           } else {
             addOutput('success', `✅ ${result.message}`);
             if (result.url) {
@@ -286,7 +325,7 @@ export function IdeHeader() {
       if (deployAction === 'dockerhub') {
         buildBody.dockerHubUsername = dockerHubActualUsername || dockerHubUsername;
         buildBody.dockerHubPassword = dockerHubPassword;
-        buildBody.dockerHubRepo = dockerHubCustomRepo || selectedDockerHubRepo || session?.name || 'codeforge-project';
+        buildBody.dockerHubRepo = dockerHubCustomRepo || selectedDockerHubRepo || `codeforge-${Date.now()}`;
       }
 
       const controller = new AbortController();
@@ -809,7 +848,7 @@ export function IdeHeader() {
                           id="dh-custom-repo"
                           value={dockerHubCustomRepo}
                           onChange={(e) => {
-                            setDockerHubCustomRepo(e.target.value);
+                            setDockerHubCustomRepo(e.target.value.toLowerCase().replace(/[^a-z0-9-_]/g, '-'));
                             setSelectedDockerHubRepo('');
                           }}
                           placeholder={session?.name || 'my-repo'}
@@ -856,6 +895,7 @@ export function IdeHeader() {
                         className="h-9 text-sm"
                       />
                     </div>
+
                     <div className="space-y-1">
                       <Label htmlFor="render-service-name" className="text-xs">Service Name</Label>
                       <Input
@@ -881,41 +921,64 @@ export function IdeHeader() {
                         </a>
                       </div>
                       <div className="rounded-md bg-amber-500/10 border border-amber-500/20 px-3 py-2 text-[11px] text-amber-400/80">
-                        ⚠️ Create a <strong>public</strong> Docker Hub repo first. Your image will be pushed there for Render to pull.
+                        ⚠️ Docker Hub credentials are required — your image will be pushed to Docker Hub first, then Render pulls it from there. Repo will be auto-created if it doesn't exist.
                       </div>
                       <div className="space-y-1">
-                        <Label htmlFor="render-dh-user" className="text-xs">Docker Hub Username</Label>
+                        <Label htmlFor="render-dh-user" className="text-xs">Docker Hub Username <span className="text-red-400">*</span></Label>
                         <Input
                           id="render-dh-user"
                           value={dockerHubUsername}
                           onChange={(e) => setDockerHubUsername(e.target.value)}
                           placeholder="your-username"
+                          required
                           className="h-9 text-sm"
                         />
                       </div>
                       <div className="space-y-1">
-                        <Label htmlFor="render-dh-pass" className="text-xs">Docker Hub Password or PAT</Label>
+                        <Label htmlFor="render-dh-pass" className="text-xs">Docker Hub Password or PAT <span className="text-red-400">*</span></Label>
                         <Input
                           id="render-dh-pass"
                           type="password"
                           value={dockerHubPassword}
                           onChange={(e) => setDockerHubPassword(e.target.value)}
                           placeholder="••••••••"
+                          required
                           className="h-9 text-sm"
                         />
                       </div>
                       <div className="space-y-1">
-                        <Label htmlFor="render-dh-repo" className="text-xs">Repository Name</Label>
-                        <Input
-                          id="render-dh-repo"
-                          value={dockerHubCustomRepo || selectedDockerHubRepo}
-                          onChange={(e) => {
-                            setDockerHubCustomRepo(e.target.value);
-                            setSelectedDockerHubRepo('');
-                          }}
-                          placeholder={session?.name || 'my-repo'}
-                          className="h-9 text-sm"
-                        />
+                        <Label htmlFor="render-dh-repo" className="text-xs">Repository Name <span className="text-red-400">*</span></Label>
+                        <div className="flex gap-1.5">
+                          <select
+                            id="render-dh-repo"
+                            value={selectedDockerHubRepo}
+                            onChange={(e) => {
+                              setSelectedDockerHubRepo(e.target.value);
+                              setDockerHubCustomRepo('');
+                            }}
+                            className="flex-1 h-9 px-3 rounded-md border border-input bg-background text-sm"
+                            disabled={isLoadingDockerHubRepos || dockerHubRepos.length === 0}
+                          >
+                            <option value="">{isLoadingDockerHubRepos ? 'Loading...' : dockerHubRepos.length > 0 ? 'Select a repository' : 'No repositories found'}</option>
+                            {dockerHubRepos.map(repo => (
+                              <option key={repo} value={repo}>{repo}</option>
+                            ))}
+                          </select>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={fetchDockerHubRepos}
+                            disabled={!dockerHubUsername || !dockerHubPassword || isLoadingDockerHubRepos}
+                            className="h-9 text-xs"
+                          >
+                            {isLoadingDockerHubRepos ? '...' : '⟳'}
+                          </Button>
+                        </div>
+                        {dockerHubReposError && (
+                          <p className="text-xs text-red-400">{dockerHubReposError}</p>
+                        )}
+                        <p className="text-[10px] text-muted-foreground">Select from your Docker Hub repositories</p>
                       </div>
                     </div>
 
@@ -1073,6 +1136,27 @@ export function IdeHeader() {
           </div>
         </div>
       )}
+
+      {/* Error Modal */}
+      <Dialog open={errorModal.open} onOpenChange={(open) => setErrorModal({ ...errorModal, open })}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Deployment Error</DialogTitle>
+          </DialogHeader>
+          <DialogDescription className="text-red-400">
+            {errorModal.message}
+          </DialogDescription>
+          <div className="flex justify-end gap-2 mt-4">
+            <Button
+              size="sm"
+              onClick={() => setErrorModal({ ...errorModal, open: false })}
+              className="h-8 text-xs"
+            >
+              Dismiss
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
