@@ -1,6 +1,6 @@
 import { initializeApp, getApps, FirebaseApp } from 'firebase/app';
 import { getAuth, Auth, initializeAuth, inMemoryPersistence } from 'firebase/auth';
-import { getFirestore, Firestore, initializeFirestore, memoryLocalCache } from 'firebase/firestore';
+import { getFirestore, Firestore, initializeFirestore, persistentLocalCache } from 'firebase/firestore';
 
 // Firebase configuration - set these in .env.local
 const firebaseConfig = {
@@ -53,9 +53,9 @@ if (getApps().length === 0) {
     persistence: inMemoryPersistence,
   });
   
-  // Use memory-only cache — no IndexedDB/offline persistence
+  // Use persistent cache — stores data in IndexedDB for offline persistence
   db = initializeFirestore(app, {
-    localCache: memoryLocalCache(),
+    localCache: persistentLocalCache(),
   });
   
   console.log("✅ Firebase app initialized (memory-only persistence)");

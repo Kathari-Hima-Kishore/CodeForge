@@ -208,17 +208,39 @@ export function FileExplorer({ isCollapsed = false, onCollapse }: { isCollapsed?
 
               {canEdit && (
                 <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity ml-1">
+                  {isFolder && (
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <button
+                          className="h-5 w-5 flex items-center justify-center rounded hover:bg-[#252640] text-gray-600 hover:text-emerald-400 transition-colors"
+                          title="Add file to folder"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <FilePlus className="h-3.5 w-3.5" />
+                        </button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="start" className="w-44">
+                        {LANGUAGES.map(lang => (
+                          <DropdownMenuItem key={lang.id} onClick={() => handleCreateFile(lang.id, item.id)} className="gap-2">
+                            <div className={`w-1.5 h-1.5 rounded-full ${lang.dot} shrink-0`} />
+                            <span className="text-xs">{lang.name}</span>
+                            <span className="text-xs text-muted-foreground ml-auto font-mono">{lang.ext}</span>
+                          </DropdownMenuItem>
+                        ))}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  )}
                   <button
                     className="h-5 w-5 flex items-center justify-center rounded hover:bg-[#252640] text-gray-600 hover:text-gray-300 transition-colors"
                     onClick={(e) => handleRename(item.id, item.name, e)}
                   >
-                    <Pencil className="h-2.5 w-2.5" />
+                    <Pencil className="h-3.5 w-3.5" />
                   </button>
                   <button
                     className="h-5 w-5 flex items-center justify-center rounded hover:bg-red-500/15 text-gray-600 hover:text-red-400 transition-colors"
                     onClick={(e) => handleDelete(item.id, e)}
                   >
-                    <Trash2 className="h-2.5 w-2.5" />
+                    <Trash2 className="h-3.5 w-3.5" />
                   </button>
                 </div>
               )}

@@ -1013,6 +1013,56 @@ app.get('/api/test-firestore', async (req, res) => {
   }
 });
 
+// Check Docker status
+app.get('/api/check-docker', (req, res) => {
+  const dockerCmd = process.platform === 'win32' ? 'docker.exe' : 'docker';
+  
+  try {
+    execSync(`${dockerCmd} info`, { stdio: 'pipe' });
+    
+    // Docker is running - get version info
+    let version = '';
+    let status = 'running';
+    try {
+      version = execSync(`${dockerCmd} version --format '{{.Server.Version}}'`, { encoding: 'utf8' }).trim();
+    } catch (e) {
+      // Ignore version fetch errors
+    }
+    
+    res.json({ 
+      installed: true, 
+      running: true, 
+      version: version,
+      status: status,
+      message: version ? `Docker ${version} is running` : 'Docker is running'
+    });
+  } catch (err) {
+    const errorMsg = err.message || '';
+    let message = 'Docker is not running';
+    let hint = 'Please start Docker Desktop';
+    
+    if (errorMsg.includes('npipe') || errorMsg.includes('pipe')) {
+      message = 'Docker daemon is not accessible';
+      hint = 'Make sure Docker Desktop is running. Try restarting Docker Desktop.';
+    } else if (errorMsg.includes('not found') || errorMsg.includes('no such file')) {
+      message = 'Docker is not installed';
+      hint = 'Install Docker Desktop from https://docker.com/products/docker-desktop';
+    } else if (errorMsg.includes('permission denied')) {
+      message = 'Docker permission denied';
+      hint = 'Run Docker Desktop as administrator or check permissions.';
+    }
+    
+    res.json({ 
+      installed: false, 
+      running: false, 
+      status: 'error',
+      error: message,
+      hint: hint,
+      details: errorMsg.substring(0, 200)
+    });
+  }
+});
+
 app.post('/api/execute', verifyFirebaseToken, async (req, res) => {
   const { language, code, stdin } = req.body;
   const result = await executeCode(language, code, stdin);
@@ -1867,7 +1917,7 @@ async function createDockerHubRepository(username, password, repoName, token) {
         return res.status(400).json({ error: 'Docker Hub credentials required' });
       }
 
-      const hubImageName = `${dockerHubUsername}/${hubRepoName}:latest`;
+      const hubImageName = `${dockerHubUsername}/${hubRepoName.toLowerCase()}:latest`;
 
       // Check/create repository before pushing
       console.log(`[Docker Hub] Checking repository ${dockerHubUsername}/${hubRepoName}...`);
@@ -1890,9 +1940,10 @@ async function createDockerHubRepository(username, password, repoName, token) {
 
       exec(`${dockerCmd} tag ${imageName} ${hubImageName}`, (err) => {
         if (err) {
+          console.log(`[Docker Tag] Failed: ${err.message}`);
           exec(`${dockerCmd} rmi ${imageName}`, () => { });
           fs.rmSync(buildDir, { recursive: true, force: true });
-          return res.status(500).json({ error: 'Failed to tag image for Docker Hub' });
+          return res.status(500).json({ error: 'Failed to tag image for Docker Hub', details: err.message });
         }
 
         const loginProc = spawn(dockerCmd, ['login', '-u', dockerHubUsername, '-p', dockerHubPassword], { shell: true });
@@ -2012,6 +2063,406 @@ async function createDockerHubRepository(username, password, repoName, token) {
       fs.rmSync(buildDir, { recursive: true, force: true });
     }
     res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/deploy/render', async (req, res) => {
+  const { renderApiKey, renderServiceName, renderRegion, renderBuildCmd, renderStartCmd, renderEnvVars, files, socketId, dockerHubUsername, dockerHubPassword, dockerHubRepo } = req.body;
+
+  if (!renderApiKey) {
+    return res.status(400).json({ error: 'Render API key is required' });
+  }
+
+  if (!files || typeof files !== 'object') {
+    return res.status(400).json({ error: 'Project files are required' });
+  }
+
+  if (!dockerHubUsername || !dockerHubPassword || !dockerHubRepo) {
+    return res.status(400).json({ error: 'Docker Hub credentials and repo name are required' });
+  }
+
+  const https = require('https');
+
+  // Helper to make Render API requests
+  const renderApiRequest = (method, path, body = null) => {
+    return new Promise((resolve, reject) => {
+      const options = {
+        hostname: 'api.render.com',
+        path: path,
+        method: method,
+        headers: {
+          'Authorization': `Bearer ${renderApiKey}`,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        }
+      };
+
+      const apiReq = https.request(options, (apiRes) => {
+        let data = '';
+        apiRes.on('data', chunk => data += chunk);
+        apiRes.on('end', () => {
+          try {
+            const jsonData = JSON.parse(data);
+            resolve({ status: apiRes.statusCode, data: jsonData });
+          } catch (e) {
+            resolve({ status: apiRes.statusCode, data: data });
+          }
+        });
+      });
+
+      apiReq.on('error', (err) => reject(err));
+
+      if (body) {
+        apiReq.write(JSON.stringify(body));
+      }
+      apiReq.end();
+    });
+  };
+
+  try {
+    const https = require('https');
+    const { exec: execSync2 } = require('child_process');
+    const { promisify } = require('util');
+    const exec = promisify(execSync2);
+
+    const dockerCmd = process.platform === 'win32' ? 'docker.exe' : 'docker';
+    const hubImageName = `${dockerHubUsername}/${dockerHubRepo}:latest`;
+    const tmpDir = path.join(os.tmpdir(), `render-deploy-${Date.now()}`);
+    fs.mkdirSync(tmpDir, { recursive: true });
+
+    // Helper to make Render API requests
+    const renderApiRequest = (method, apiPath, body = null) => {
+      return new Promise((resolve, reject) => {
+        const options = {
+          hostname: 'api.render.com',
+          path: apiPath,
+          method: method,
+          headers: {
+            'Authorization': `Bearer ${renderApiKey}`,
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+          }
+        };
+
+        const apiReq = https.request(options, (apiRes) => {
+          let data = '';
+          apiRes.on('data', chunk => data += chunk);
+          apiRes.on('end', () => {
+            try {
+              const jsonData = JSON.parse(data);
+              resolve({ status: apiRes.statusCode, data: jsonData });
+            } catch (e) {
+              resolve({ status: apiRes.statusCode, data: data });
+            }
+          });
+        });
+
+        apiReq.on('error', (err) => reject(err));
+        if (body) apiReq.write(JSON.stringify(body));
+        apiReq.end();
+      });
+    };
+
+    // Helper to emit output
+    const emitOutput = (output, isError = false) => {
+      if (socketId) {
+        io.to(socketId).emit('execution_output', { output, isError });
+      }
+    };
+
+    // Helper to run shell commands (sync with timeout)
+    const runCmd = (cmd) => {
+      return new Promise((resolve) => {
+        const child = spawn(cmd, [], { cwd: tmpDir, shell: true });
+        let stdout = '';
+        let stderr = '';
+        child.stdout.on('data', d => stdout += d.toString());
+        child.stderr.on('data', d => stderr += d.toString());
+        const timer = setTimeout(() => {
+          child.kill();
+          resolve({ err: new Error('timeout'), stdout, stderr });
+        }, 120000);
+        child.on('close', (code) => {
+          clearTimeout(timer);
+          resolve({ err: code !== 0 ? new Error(`exit ${code}`) : null, stdout, stderr });
+        });
+      });
+    };
+
+    // Helper to spawn async process
+    const spawnCmd = (cmd, args, cwd) => {
+      return new Promise((resolve) => {
+        const child = spawn(cmd, args, { cwd: cwd || tmpDir, shell: true });
+        let output = '';
+        child.stdout.on('data', d => output += d.toString());
+        child.stderr.on('data', d => output += d.toString());
+        child.on('close', code => resolve({ code, output }));
+      });
+    };
+
+    emitOutput(`🚀 Deploying to Render.com via Docker Hub...\n`);
+
+    // Step 1: Write project files
+    emitOutput('📝 Writing project files...\n');
+    const fileNames = Object.keys(files);
+    for (const [pFile, content] of Object.entries(files)) {
+      const fullPath = path.join(tmpDir, pFile);
+      const dir = path.dirname(fullPath);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(fullPath, content || '');
+    }
+    emitOutput(`✅ ${fileNames.length} files written\n`);
+
+    // Step 2: Build Docker image
+    emitOutput('🐳 Building Docker image...\n');
+    const imageName = `codeforge-${Date.now()}`;
+    const dockerfileContent = files['Dockerfile'] || files['Dockerfile.dockerfile'] || null;
+
+    if (!dockerfileContent) {
+      // Auto-generate Dockerfile
+      emitOutput('📄 No Dockerfile found, generating...\n');
+      const hasPy = fileNames.some(f => f.endsWith('.py'));
+      const hasNode = fileNames.some(f => f.endsWith('.json') && f.includes('package'));
+      const hasJava = fileNames.some(f => f.endsWith('.java'));
+      const hasGo = fileNames.some(f => f.endsWith('.go'));
+      const hasCpp = fileNames.some(f => f.endsWith('.cpp') || f.endsWith('.cc'));
+      const hasC = fileNames.some(f => f.endsWith('.c')) && !hasCpp;
+      const hasRuby = fileNames.some(f => f.includes('Gemfile'));
+
+      let dockerfile;
+      if (hasPy) {
+        const pythonVersion = files['requirements.txt'] ? 'python:3.11-slim' : 'python:3.11-alpine';
+        dockerfile = `FROM ${pythonVersion}\nWORKDIR /app\nCOPY . .\nRUN pip install -r requirements.txt\nEXPOSE 10000\nCMD ["python", "app.py"]`;
+      } else if (hasNode) {
+        dockerfile = `FROM node:18-alpine\nWORKDIR /app\nCOPY package*.json ./\nRUN npm ci --omit=dev\nCOPY . .\nEXPOSE 10000\nCMD ["node", "index.js"]`;
+      } else if (hasJava) {
+        dockerfile = `FROM eclipse-temurin:17-jdk-alpine\nWORKDIR /app\nCOPY . .\nRUN javac *.java\nEXPOSE 10000\nCMD ["java", "Main"]`;
+      } else if (hasGo) {
+        dockerfile = `FROM golang:1.21-alpine\nWORKDIR /app\nCOPY . .\nEXPOSE 10000\nCMD ["go", "run", "."]`;
+      } else if (hasCpp || hasC) {
+        dockerfile = `FROM gcc:latest\nWORKDIR /app\nCOPY . .\nRUN gcc -o app ${hasCpp ? '*.cpp' : '*.c'}\nEXPOSE 10000\nCMD ["./app"]`;
+      } else if (hasRuby) {
+        dockerfile = `FROM ruby:3.2-alpine\nWORKDIR /app\nCOPY . .\nRUN bundle install\nEXPOSE 10000\nCMD ["bundle", "exec", "ruby", "app.rb"]`;
+      } else {
+        dockerfile = `FROM node:18-alpine\nWORKDIR /app\nCOPY . .\nEXPOSE 10000\nCMD ["node", "index.js"]`;
+      }
+
+      fs.writeFileSync(path.join(tmpDir, 'Dockerfile'), dockerfile);
+      const langName = hasPy ? 'Python' : (hasNode ? 'Node.js' : (hasJava ? 'Java' : (hasGo ? 'Go' : (hasCpp ? 'C++' : (hasRuby ? 'Ruby' : 'Node.js')))));
+      emitOutput(`✅ Generated ${langName} Dockerfile\n`);
+    } else {
+      emitOutput('📄 Using provided Dockerfile\n');
+    }
+
+    // Build the image
+    const buildResult = await spawnCmd(dockerCmd, ['build', '-t', imageName, '.']);
+    if (buildResult.code !== 0) {
+      emitOutput(`❌ Docker build failed:\n${buildResult.output}\n`, true);
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+      return res.status(500).json({ error: 'Docker build failed' });
+    }
+    emitOutput('✅ Docker image built\n');
+
+    // Step 3: Tag for Docker Hub
+    emitOutput('🏷️ Tagging for Docker Hub...\n');
+    const tagResult = await runCmd(`${dockerCmd} tag ${imageName} ${hubImageName}`);
+    if (tagResult.err) {
+      exec(`${dockerCmd} rmi ${imageName}`, () => { });
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+      return res.status(500).json({ error: 'Failed to tag image' });
+    }
+    emitOutput(`✅ Tagged as ${hubImageName}\n`);
+
+    // Step 4: Push to Docker Hub
+    emitOutput('⬆️ Pushing to Docker Hub...\n');
+    const loginResult = await runCmd(`${dockerCmd} login -u ${dockerHubUsername} -p ${dockerHubPassword}`);
+    if (loginResult.err) {
+      exec(`${dockerCmd} rmi ${imageName} ${hubImageName}`, () => { });
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+      emitOutput(`❌ Docker Hub login failed: ${loginResult.stderr}\n`, true);
+      return res.status(500).json({ error: 'Docker Hub login failed' });
+    }
+    emitOutput('✅ Logged in to Docker Hub\n');
+
+    const pushResult = await spawnCmd(dockerCmd, ['push', hubImageName]);
+    exec(`${dockerCmd} logout`, () => { });
+    exec(`${dockerCmd} rmi ${imageName} ${hubImageName}`, () => { });
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+
+    if (pushResult.code !== 0) {
+      emitOutput(`❌ Docker Hub push failed:\n${pushResult.output}\n`, true);
+      return res.status(500).json({ error: 'Docker Hub push failed' });
+    }
+    emitOutput(`✅ Pushed to Docker Hub: ${hubImageName}\n`);
+
+    // Step 5: Deploy to Render using Docker image
+    emitOutput('🚀 Deploying to Render.com...\n');
+
+    // Get owner ID
+    const ownerResponse = await renderApiRequest('GET', '/v1/owners');
+    if (ownerResponse.status !== 200) {
+      emitOutput(`❌ Failed to get Render account: ${ownerResponse.data?.message || ownerResponse.data}\n`, true);
+      return res.status(400).json({ error: `Failed to get Render account: ${ownerResponse.data?.message}` });
+    }
+    const owners = Array.isArray(ownerResponse.data) ? ownerResponse.data : [];
+    const ownerId = owners[0]?.id || owners[0]?.owner?.id;
+    if (!ownerId) {
+      emitOutput(`❌ Could not determine Render account ID\n`, true);
+      return res.status(400).json({ error: 'Could not determine Render account ID' });
+    }
+    emitOutput(`✅ Account: ${owners[0]?.name || owners[0]?.email || ownerId}\n`);
+
+    // Check for existing service
+    emitOutput('📋 Checking for existing services...\n');
+    const listResponse = await renderApiRequest('GET', '/v1/services?limit=100');
+    if (listResponse.status !== 200) {
+      emitOutput(`❌ ${listResponse.data?.message || 'Failed to list services'}\n`, true);
+      return res.status(400).json({ error: listResponse.data?.message || 'Failed to list Render services' });
+    }
+
+    const services = Array.isArray(listResponse.data) ? listResponse.data : [];
+    const existingService = services.find(s => {
+      const service = s.service || s;
+      return service.name === renderServiceName;
+    });
+
+    const envVars = (renderEnvVars || []).map(ev => ({ key: ev.key, value: ev.value }));
+    const plan = 'free';
+    const region = renderRegion || 'oregon';
+    const buildCommand = renderBuildCmd || '';
+    const startCommand = renderStartCmd || '';
+
+    let serviceId;
+    let serviceUrl;
+
+    if (existingService) {
+      // Update existing service with Docker image
+      const service = existingService.service || existingService;
+      serviceId = service.id;
+      serviceUrl = service.serviceDetails?.url || `https://${renderServiceName}.onrender.com`;
+      emitOutput(`📝 Found existing service: ${renderServiceName}\n`);
+      emitOutput('🔄 Updating service...\n');
+
+      const updateBody = {
+        image: {
+          ownerId: '',
+          imagePath: hubImageName,
+        },
+        serviceDetails: {
+          envVars: envVars,
+          plan: plan,
+          region: region
+        }
+      };
+
+      const updateResponse = await renderApiRequest('PATCH', `/v1/services/${serviceId}`, updateBody);
+      if (updateResponse.status !== 200 && updateResponse.status !== 201) {
+        const errorMsg = typeof updateResponse.data === 'object' ? (updateResponse.data?.message || JSON.stringify(updateResponse.data)) : updateResponse.data;
+        emitOutput(`❌ ${errorMsg}\n`, true);
+        return res.status(400).json({ error: errorMsg });
+      }
+      emitOutput('✅ Service updated\n');
+    } else {
+      // Create new Docker-backed service
+      emitOutput('🆕 Creating new Docker web service...\n');
+
+      const createBody = {
+        type: 'web_service',
+        name: renderServiceName,
+        ownerId: ownerId,
+        image: {
+          ownerId: '',
+          imagePath: hubImageName,
+        },
+        serviceDetails: {
+          plan: plan,
+          region: region,
+          envVars: envVars
+        }
+      };
+
+      const createResponse = await renderApiRequest('POST', '/v1/services', createBody);
+      if (createResponse.status !== 200 && createResponse.status !== 201) {
+        const errorMsg = typeof createResponse.data === 'object' ? (createResponse.data?.message || JSON.stringify(createResponse.data)) : createResponse.data;
+        emitOutput(`❌ ${errorMsg}\n`, true);
+        return res.status(400).json({ error: errorMsg });
+      }
+
+      const created = createResponse.data;
+      serviceId = created?.id || created?.service?.id;
+      serviceUrl = created?.serviceDetails?.url || created?.url || `https://${renderServiceName}.onrender.com`;
+      emitOutput('✅ Service created\n');
+    }
+
+    // Step 6: Trigger deploy
+    emitOutput('🚀 Triggering deployment...\n');
+    const deployResponse = await renderApiRequest('POST', `/v1/services/${serviceId}/deploys`, {
+      clearCache: false
+    });
+
+    if (deployResponse.status !== 200 && deployResponse.status !== 201) {
+      emitOutput('⚠️ Warning: Failed to trigger deploy\n', true);
+    } else {
+      const deployId = deployResponse.data?.id;
+      emitOutput('📦 Deployment started, waiting for service to go live...\n');
+
+      // Poll for status
+      const maxPolls = 200;
+      let pollCount = 0;
+      const startTime = Date.now();
+
+      while (pollCount < maxPolls) {
+        await new Promise(r => setTimeout(r, 3000));
+        pollCount++;
+        const elapsed = Math.floor((Date.now() - startTime) / 1000);
+        const minutes = Math.floor(elapsed / 60);
+        const seconds = elapsed % 60;
+        const timeStr = minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
+
+        try {
+          const statusResponse = await renderApiRequest('GET', `/v1/services/${serviceId}`);
+          if (statusResponse.status === 200 && deployId) {
+            const deployStatusResponse = await renderApiRequest('GET', `/v1/services/${serviceId}/deploys/${deployId}`);
+            if (deployStatusResponse.status === 200) {
+              const deployStatus = deployStatusResponse.data?.status;
+              emitOutput(`⏳ Status: ${deployStatus} (${timeStr} elapsed)\n`);
+
+              if (deployStatus === 'live') {
+                const url = statusResponse.data?.serviceDetails?.url || serviceUrl;
+                emitOutput(`\n🎉 Deployment successful!\n`);
+                emitOutput(`🌐 Live at: ${url}\n`);
+                return res.json({ success: true, message: `Deployed to Render: ${renderServiceName}`, url, serviceId });
+              }
+
+              if (deployStatus === 'build_failed' || deployStatus === 'update_failed' || deployStatus === 'deactivated') {
+                emitOutput(`\n❌ Deployment failed: ${deployStatus}\n`, true);
+                emitOutput(`📊 Check: https://dashboard.render.com/web/${serviceId}\n`);
+                return res.status(400).json({ error: `Deployment failed: ${deployStatus}`, dashboardUrl: `https://dashboard.render.com/web/${serviceId}` });
+              }
+            }
+          }
+        } catch (pollErr) {
+          emitOutput(`⏳ Waiting... (${timeStr} elapsed)\n`);
+        }
+      }
+
+      emitOutput(`\n⏱️ Deployment taking longer than expected\n`, true);
+      emitOutput(`📊 Check: https://dashboard.render.com/web/${serviceId}\n`);
+      return res.json({
+        success: true,
+        message: 'Deployment initiated - check Render dashboard',
+        dashboardUrl: `https://dashboard.render.com/web/${serviceId}`,
+        serviceId,
+        timeout: true
+      });
+    }
+
+    const url = serviceUrl || `https://${renderServiceName}.onrender.com`;
+    return res.json({ success: true, message: `Deployed to Render: ${renderServiceName}`, url, serviceId });
+
+  } catch (error) {
+    emitOutput(`❌ Render deployment error: ${error.message}\n`, true);
+    return res.status(500).json({ error: error.message });
   }
 });
 
