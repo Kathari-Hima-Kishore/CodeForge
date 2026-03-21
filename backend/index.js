@@ -2812,21 +2812,15 @@ fi
             fs.chmodSync(path.join(tmpDir, 'start.sh'), 0o755);
           }
 
-          // Add Flask to requirements if not present
-          let reqContent = files['requirements.txt'] || '';
+          // Regenerate requirements.txt with proper packages
           const detectedPythonPackages = detectPythonPackages(files);
-          if (!reqContent.toLowerCase().includes('flask')) {
-            reqContent += '\nFlask>=2.3.0\n';
-          }
-          // ✅ Always add gunicorn for production Flask deployment
-          if (!reqContent.toLowerCase().includes('gunicorn')) {
-            reqContent += 'gunicorn>=20.0.0\n';
-          }
+          let reqLines = ['Flask>=2.3.0', 'gunicorn>=20.0.0'];
           detectedPythonPackages.forEach((pkg) => {
-            if (pkg !== 'flask' && pkg !== 'gunicorn' && !reqContent.toLowerCase().includes(pkg.toLowerCase())) {
-              reqContent += `${pkg}\n`;
+            if (pkg.toLowerCase() !== 'flask' && pkg.toLowerCase() !== 'gunicorn' && !reqLines.some(line => line.toLowerCase().startsWith(pkg.toLowerCase()))) {
+              reqLines.push(pkg);
             }
           });
+          const reqContent = reqLines.join('\n') + '\n';
           fs.writeFileSync(path.join(tmpDir, 'requirements.txt'), reqContent);
 
           // Extract app module from entry file (e.g., app.py -> app)
@@ -2837,30 +2831,49 @@ fi
         } else if (isFastAPI) {
           // FastAPI: use uvicorn with 0.0.0.0
           const fastApiModule = mainPy.replace('.py', '') + ':app';
-          let fastApiReqs = files['requirements.txt'] || '';
-          if (!fastApiReqs.toLowerCase().includes('fastapi')) {
-            fastApiReqs += '\nfastapi>=0.100.0\nuvicorn[standard]>=0.23.0\n';
-            fs.writeFileSync(path.join(tmpDir, 'requirements.txt'), fastApiReqs);
-          }
+          const detectedPythonPackages = detectPythonPackages(files);
+          let reqLines = ['fastapi>=0.100.0', 'uvicorn[standard]>=0.23.0'];
+          detectedPythonPackages.forEach((pkg) => {
+            if (pkg.toLowerCase() !== 'fastapi' && pkg.toLowerCase() !== 'uvicorn' && !reqLines.some(line => line.toLowerCase().startsWith(pkg.toLowerCase()))) {
+              reqLines.push(pkg);
+            }
+          });
+          const fastApiReqs = reqLines.join('\n') + '\n';
+          fs.writeFileSync(path.join(tmpDir, 'requirements.txt'), fastApiReqs);
           dockerfile = `FROM ${pythonVersion}\nWORKDIR /app\nCOPY requirements.txt .\nRUN pip install --no-cache-dir -r requirements.txt\nCOPY . .\nENV PORT=10000\nEXPOSE 10000\nCMD ["uvicorn", "${fastApiModule}", "--host", "0.0.0.0", "--port", "10000"]`;
         } else if (isDjango) {
-          let djangoReqs = files['requirements.txt'] || '';
-          if (!djangoReqs.toLowerCase().includes('django')) {
-            djangoReqs += '\nDjango>=4.2.0\ngunicorn>=21.0.0\n';
-            fs.writeFileSync(path.join(tmpDir, 'requirements.txt'), djangoReqs);
-          }
+          const detectedPythonPackages = detectPythonPackages(files);
+          let reqLines = ['Django>=4.2.0', 'gunicorn>=21.0.0'];
+          detectedPythonPackages.forEach((pkg) => {
+            if (pkg.toLowerCase() !== 'django' && pkg.toLowerCase() !== 'gunicorn' && !reqLines.some(line => line.toLowerCase().startsWith(pkg.toLowerCase()))) {
+              reqLines.push(pkg);
+            }
+          });
+          const djangoReqs = reqLines.join('\n') + '\n';
+          fs.writeFileSync(path.join(tmpDir, 'requirements.txt'), djangoReqs);
           dockerfile = `FROM ${pythonVersion}\nWORKDIR /app\nCOPY requirements.txt .\nRUN pip install --no-cache-dir -r requirements.txt\nCOPY . .\nENV PORT=10000\nENV PYTHONUNBUFFERED=1\nEXPOSE 10000\nCMD ["gunicorn", "--bind", "0.0.0.0:10000", "codeforge.wsgi:application"]`;
         } else if (isStreamlit) {
-          let streamlitReqs = files['requirements.txt'] || '';
-          if (!streamlitReqs.toLowerCase().includes('streamlit')) {
-            streamlitReqs += '\nstreamlit>=1.28.0\n';
-            fs.writeFileSync(path.join(tmpDir, 'requirements.txt'), streamlitReqs);
-          }
+          const detectedPythonPackages = detectPythonPackages(files);
+          let reqLines = ['streamlit>=1.28.0'];
+          detectedPythonPackages.forEach((pkg) => {
+            if (pkg.toLowerCase() !== 'streamlit' && !reqLines.some(line => line.toLowerCase().startsWith(pkg.toLowerCase()))) {
+              reqLines.push(pkg);
+            }
+          });
+          const streamlitReqs = reqLines.join('\n') + '\n';
+          fs.writeFileSync(path.join(tmpDir, 'requirements.txt'), streamlitReqs);
           dockerfile = `FROM ${pythonVersion}\nWORKDIR /app\nCOPY requirements.txt .\nRUN pip install --no-cache-dir -r requirements.txt\nCOPY . .\nENV PORT=10000\nEXPOSE 10000\nCMD ["streamlit", "run", "${mainPy}", "--server.port=10000", "--server.address=0.0.0.0"]`;
         } else {
           // Generic Python: try to detect if it reads PORT env or use start script
-          // Always handle requirements.txt if it exists
+          // Always regenerate requirements.txt with detected packages
           let hasRequirements = !!files['requirements.txt'];
+          if (hasRequirements) {
+            const detectedPythonPackages = detectPythonPackages(files);
+            const reqLines = detectedPythonPackages.length > 0 ? detectedPythonPackages : [];
+            const reqContent = reqLines.join('\n') + (reqLines.length > 0 ? '\n' : '');
+            fs.writeFileSync(path.join(tmpDir, 'requirements.txt'), reqContent);
+          }
+
           if (hasStartScript) {
             if (hasRequirements) {
               dockerfile = `FROM ${pythonVersion}\nWORKDIR /app\nCOPY requirements.txt .\nRUN pip install --no-cache-dir -r requirements.txt\nCOPY . .\nENV PORT=10000\nEXPOSE 10000\nCMD sh start.sh`;
