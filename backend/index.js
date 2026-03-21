@@ -2859,11 +2859,21 @@ fi
           dockerfile = `FROM ${pythonVersion}\nWORKDIR /app\nCOPY requirements.txt .\nRUN pip install --no-cache-dir -r requirements.txt\nCOPY . .\nENV PORT=10000\nEXPOSE 10000\nCMD ["streamlit", "run", "${mainPy}", "--server.port=10000", "--server.address=0.0.0.0"]`;
         } else {
           // Generic Python: try to detect if it reads PORT env or use start script
+          // Always handle requirements.txt if it exists
+          let hasRequirements = !!files['requirements.txt'];
           if (hasStartScript) {
-            dockerfile = `FROM ${pythonVersion}\nWORKDIR /app\nCOPY . .\nENV PORT=10000\nEXPOSE 10000\nCMD ["sh", "start.sh"]`;
+            if (hasRequirements) {
+              dockerfile = `FROM ${pythonVersion}\nWORKDIR /app\nCOPY requirements.txt .\nRUN pip install --no-cache-dir -r requirements.txt\nCOPY . .\nENV PORT=10000\nEXPOSE 10000\nCMD ["sh", "start.sh"]`;
+            } else {
+              dockerfile = `FROM ${pythonVersion}\nWORKDIR /app\nCOPY . .\nENV PORT=10000\nEXPOSE 10000\nCMD ["sh", "start.sh"]`;
+            }
           } else {
             // Try to run the main file; if it reads PORT env, great
-            dockerfile = `FROM ${pythonVersion}\nWORKDIR /app\nCOPY . .\nENV PORT=10000\nEXPOSE 10000\nCMD ["sh", "-c", "python ${mainPy} --port=$PORT || python ${mainPy}"]`;
+            if (hasRequirements) {
+              dockerfile = `FROM ${pythonVersion}\nWORKDIR /app\nCOPY requirements.txt .\nRUN pip install --no-cache-dir -r requirements.txt\nCOPY . .\nENV PORT=10000\nEXPOSE 10000\nCMD ["sh", "-c", "python ${mainPy}"]`;
+            } else {
+              dockerfile = `FROM ${pythonVersion}\nWORKDIR /app\nCOPY . .\nENV PORT=10000\nEXPOSE 10000\nCMD ["sh", "-c", "python ${mainPy}"]`;
+            }
           }
         }
       } else if (hasNode) {
