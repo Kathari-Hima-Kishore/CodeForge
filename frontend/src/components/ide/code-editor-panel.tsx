@@ -4,8 +4,7 @@ import React, { useState, useRef, useEffect, Suspense, useCallback } from 'react
 import { Button } from '@/components/ui/button';
 import { Play, Loader2, X, FileCode, Lock, Eye } from 'lucide-react';
 import { useSession } from '@/contexts/session-context';
-
-const MonacoEditor = React.lazy(() => import('@monaco-editor/react'));
+import Editor from '@monaco-editor/react';
 
 interface LangConfig {
   id: string;
@@ -20,10 +19,13 @@ const LANG_CONFIG: LangConfig[] = [
   { id: 'css',        name: 'CSS',        monacoId: 'css',        color: 'text-pink-400',    dot: 'bg-pink-400' },
   { id: 'javascript', name: 'JS',         monacoId: 'javascript', color: 'text-yellow-400',  dot: 'bg-yellow-400' },
   { id: 'typescript', name: 'TS',         monacoId: 'typescript', color: 'text-blue-400',    dot: 'bg-blue-400' },
+  { id: 'json',       name: 'JSON',       monacoId: 'json',       color: 'text-amber-300',   dot: 'bg-amber-300' },
   { id: 'python',     name: 'Python',     monacoId: 'python',     color: 'text-emerald-400', dot: 'bg-emerald-400' },
   { id: 'java',       name: 'Java',       monacoId: 'java',       color: 'text-orange-400',  dot: 'bg-orange-400' },
   { id: 'c',          name: 'C',          monacoId: 'c',          color: 'text-slate-400',   dot: 'bg-slate-400' },
   { id: 'cpp',        name: 'C++',        monacoId: 'cpp',        color: 'text-sky-300',     dot: 'bg-sky-300' },
+  { id: 'dotenv',     name: '.env',       monacoId: 'shell',      color: 'text-lime-400',    dot: 'bg-lime-400' },
+  { id: 'requirements', name: 'Requirements', monacoId: 'plaintext', color: 'text-purple-400', dot: 'bg-purple-400' },
 ];
 
 function getLang(language: string): LangConfig {
@@ -162,12 +164,6 @@ export function CodeEditorPanel() {
               <span className="text-[13px]">No file selected</span>
             </div>
           )}
-          {!canEdit && (
-            <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-yellow-500/10 border border-yellow-500/20 text-yellow-400/80 text-[10px] shrink-0">
-              <Lock className="h-2.5 w-2.5" />
-              View Only
-            </div>
-          )}
         </div>
 
         <Button
@@ -201,7 +197,7 @@ export function CodeEditorPanel() {
       </div>
 
       {/* Editor area */}
-      <div className="flex-1 min-h-0 overflow-hidden relative">
+      <div className="flex-1 min-h-0 overflow-hidden relative bg-[#0d0e17]">
         {!currentFile ? (
           <div className="flex flex-col items-center justify-center h-full gap-4 select-none">
             <div className="relative">
@@ -226,32 +222,42 @@ export function CodeEditorPanel() {
               </div>
             }
           >
-            <MonacoEditor
-              height="100%"
-              language={getLang(currentFile.language).monacoId}
-              value={code}
-              onChange={handleCodeChange}
-              onMount={handleEditorMount}
-              theme="vs-dark"
-              options={{
-                readOnly: !canEdit,
-                minimap: { enabled: true },
-                fontSize: 14,
-                fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-                lineNumbers: 'on',
-                renderLineHighlight: 'all',
-                scrollBeyondLastLine: false,
-                automaticLayout: true,
-                tabSize: 4,
-                wordWrap: 'on',
-                padding: { top: 16, bottom: 16 },
-                cursorBlinking: 'smooth',
-                cursorSmoothCaretAnimation: 'on',
-                smoothScrolling: true,
-                bracketPairColorization: { enabled: true },
-                guides: { bracketPairs: true },
-              }}
-            />
+            <div className="flex h-full min-h-0 flex-col">
+              {!canEdit && (
+                <div className="flex items-center gap-2 border-b border-yellow-500/15 bg-yellow-500/8 px-4 py-2 text-[11px] text-yellow-300/85 shrink-0">
+                  <Lock className="h-3 w-3 shrink-0" />
+                  <span>View only. Ask the host or a co-host if you need edit access.</span>
+                </div>
+              )}
+              <div className="flex-1 min-h-0">
+                <Editor
+                  height="100%"
+                  language={getLang(currentFile.language).monacoId}
+                  value={code}
+                  onChange={handleCodeChange}
+                  onMount={handleEditorMount}
+                  theme="vs-dark"
+                  options={{
+                    readOnly: !canEdit,
+                    minimap: { enabled: true },
+                    fontSize: 14,
+                    fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+                    lineNumbers: 'on',
+                    renderLineHighlight: 'all',
+                    scrollBeyondLastLine: false,
+                    automaticLayout: true,
+                    tabSize: 4,
+                    wordWrap: 'on',
+                    padding: { top: 16, bottom: 16 },
+                    cursorBlinking: 'smooth',
+                    cursorSmoothCaretAnimation: 'on',
+                    smoothScrolling: true,
+                    bracketPairColorization: { enabled: true },
+                    guides: { bracketPairs: true },
+                  }}
+                />
+              </div>
+            </div>
           </Suspense>
         )}
       </div>

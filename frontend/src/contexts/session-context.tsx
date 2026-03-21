@@ -70,6 +70,13 @@ export interface OutputItem {
   timestamp: number;
 }
 
+export interface DeployProgress {
+  action: 'download' | 'dockerhub' | 'render';
+  percent: number;
+  message: string;
+  active: boolean;
+}
+
 export interface SessionData {
   sessionId: string;
   name: string;
@@ -138,6 +145,7 @@ interface SessionContextType {
   output: OutputItem[];
   clearOutput: () => void;
   addOutput: (type: OutputItem['type'], content: string) => void;
+  deployProgress: DeployProgress | null;
 
   // Code execution
   isExecuting: boolean;
@@ -150,6 +158,7 @@ interface SessionContextType {
   joinSession: (sessionId: string) => Promise<void>;
   rejoinSession: (sessionId: string) => Promise<void>;
   leaveSession: () => Promise<void>;
+  deleteSession: () => Promise<void>;
 
   // User management (host only)
   changeUserRole: (userId: string, role: Role) => Promise<void>;
@@ -184,6 +193,129 @@ function generateColor(): string {
   return colors[Math.floor(Math.random() * colors.length)];
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function hasNestedSessionData(value: unknown): value is Record<string, unknown> {
+  return isRecord(value) && (
+    'hostId' in value ||
+    'hostName' in value ||
+    'participants' in value ||
+    'sessionId' in value ||
+    'name' in value
+  );
+}
+
+function isRole(value: unknown): value is Role {
+  return value === 'host' || value === 'co-host' || value === 'editor' || value === 'viewer';
+}
+
+function normalizeParticipant(rawValue: unknown, fallbackUid: string): Participant {
+  const raw = isRecord(rawValue) ? rawValue : {};
+  const normalizedUid = typeof raw.uid === 'string' && raw.uid.trim() ? raw.uid : fallbackUid;
+  const normalizedName = typeof raw.name === 'string' && raw.name.trim()
+    ? raw.name.trim()
+    : 'User';
+
+  const joinedAtSource = raw.joinedAt ?? raw.joined_at;
+  let joinedAt = Date.now();
+  if (typeof joinedAtSource === 'number' && Number.isFinite(joinedAtSource)) {
+    joinedAt = joinedAtSource;
+  } else if (typeof joinedAtSource === 'string') {
+    const parsed = Date.parse(joinedAtSource);
+    if (!Number.isNaN(parsed)) {
+      joinedAt = parsed;
+    }
+  }
+
+  const photoURL = typeof raw.photoURL === 'string' && raw.photoURL.trim()
+    ? raw.photoURL
+    : undefined;
+
+  return {
+    uid: normalizedUid,
+    name: normalizedName,
+    email: typeof raw.email === 'string' ? raw.email : '',
+    role: isRole(raw.role) ? raw.role : 'viewer',
+    color: typeof raw.color === 'string' && raw.color.trim() ? raw.color : generateColor(),
+    isOnline: typeof raw.isOnline === 'boolean' ? raw.isOnline : true,
+    ...(photoURL ? { photoURL } : {}),
+    joinedAt,
+  };
+}
+
+function participantsNeedRepair(value: unknown): boolean {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  return Object.values(value).some((participant) => {
+    const raw = isRecord(participant) ? participant : {};
+    return (
+      typeof raw.uid !== 'string' ||
+      !raw.uid.trim() ||
+      typeof raw.name !== 'string' ||
+      !raw.name.trim() ||
+      !isRole(raw.role) ||
+      typeof raw.color !== 'string' ||
+      !raw.color.trim() ||
+      typeof raw.isOnline !== 'boolean'
+    );
+  });
+}
+
+function normalizeSessionData(raw: unknown, fallbackSessionId = ''): SessionData {
+  const root = isRecord(raw) ? raw : {};
+  const nested = hasNestedSessionData(root.files) ? root.files : null;
+  const source = nested ?? root;
+
+  const participantSource = isRecord(root.participants)
+    ? root.participants
+    : isRecord(source.participants)
+      ? source.participants
+      : {};
+
+  const participants = Object.fromEntries(
+    Object.entries(participantSource).map(([uid, value]) => [uid, normalizeParticipant(value, uid)])
+  ) as Record<string, Participant>;
+
+  const files = Array.isArray(root.files)
+    ? root.files as FileItem[]
+    : Array.isArray(source.files)
+      ? source.files as FileItem[]
+      : [];
+
+  const messages = Array.isArray(root.messages)
+    ? root.messages as ChatMessage[]
+    : Array.isArray(source.messages)
+      ? source.messages as ChatMessage[]
+      : [];
+
+  return {
+    sessionId: String(root.sessionId ?? source.sessionId ?? fallbackSessionId),
+    name: String(root.name ?? source.name ?? ''),
+    hostId: String(root.hostId ?? source.hostId ?? ''),
+    hostName: String(root.hostName ?? source.hostName ?? ''),
+    createdAt: (root.createdAt ?? source.createdAt ?? null) as Timestamp | null,
+    participants,
+    files,
+    messages,
+    isActive: typeof root.isActive === 'boolean'
+      ? root.isActive
+      : typeof source.isActive === 'boolean'
+        ? source.isActive
+        : true,
+  };
+}
+
+function sessionDocumentNeedsRepair(raw: unknown): boolean {
+  const root = isRecord(raw) ? raw : {};
+  const nested = hasNestedSessionData(root.files) ? root.files : null;
+  const source = nested ?? root;
+  return hasNestedSessionData(root.files) || participantsNeedRepair(root.participants) || participantsNeedRepair(source.participants);
+}
+
 export function SessionProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
   const [session, setSession] = useState<Session | null>(null);
@@ -197,12 +329,18 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [currentFileId, setCurrentFileId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [output, setOutput] = useState<OutputItem[]>([]);
+  const [deployProgress, setDeployProgress] = useState<DeployProgress | null>(null);
   const [isExecuting, setIsExecuting] = useState(false);
   const [isTerminalRunning, setIsTerminalRunning] = useState(false);
+  const debounceTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
+  const pendingFilesRef = React.useRef<FileItem[] | null>(null);
 
   // Refs to access current session/user inside socket event handlers without stale closures
   const sessionRef = React.useRef<Session | null>(null);
   const userRef = React.useRef<typeof user>(null);
+  const joinedSocketSessionKeyRef = React.useRef<string | null>(null);
+  const pendingSocketSessionKeyRef = React.useRef<string | null>(null);
+  const previousUserIdRef = React.useRef<string | null>(null);
   useEffect(() => { sessionRef.current = session; }, [session]);
   useEffect(() => { userRef.current = user; }, [user]);
 
@@ -214,6 +352,151 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const addOutput = useCallback((type: OutputItem['type'], content: string) => {
     setOutput(prev => [...prev, { type, content, timestamp: Date.now() }]);
   }, []);
+
+  useEffect(() => {
+    const currentUserId = user?.uid ?? null;
+    const previousUserId = previousUserIdRef.current;
+
+    if (previousUserId !== null && previousUserId !== currentUserId) {
+      setSession(null);
+      setMessages([]);
+      setOutput([]);
+      setDeployProgress(null);
+      setDeployProgress(null);
+      setConnectionError(null);
+      setFiles([]);
+      setCurrentFileId(null);
+      setIsConnecting(false);
+      joinedSocketSessionKeyRef.current = null;
+      pendingSocketSessionKeyRef.current = null;
+    }
+
+    previousUserIdRef.current = currentUserId;
+  }, [user?.uid]);
+
+  const applyPersistedFiles = useCallback((nextFiles: FileItem[] | undefined) => {
+    const normalizedFiles = Array.isArray(nextFiles) ? nextFiles : [];
+    setFiles(normalizedFiles);
+    setCurrentFileId(prev => {
+      if (prev && normalizedFiles.some(file => !file.isFolder && file.id === prev)) {
+        return prev;
+      }
+
+      const firstFile = normalizedFiles.find(file => !file.isFolder);
+      return firstFile?.id ?? null;
+    });
+  }, []);
+
+  const applyPersistedMessages = useCallback((nextMessages: ChatMessage[] | undefined) => {
+    setMessages(Array.isArray(nextMessages) ? nextMessages : []);
+  }, []);
+
+  const repairSessionDocument = useCallback(async (sessionId: string, rawData: unknown) => {
+    if (!sessionDocumentNeedsRepair(rawData)) {
+      return;
+    }
+
+    const normalized = normalizeSessionData(rawData, sessionId);
+
+    try {
+      await setDoc(doc(db, 'sessions', sessionId), {
+        sessionId: normalized.sessionId,
+        name: normalized.name,
+        hostId: normalized.hostId,
+        hostName: normalized.hostName,
+        createdAt: normalized.createdAt,
+        participants: normalized.participants,
+        files: normalized.files,
+        messages: normalized.messages,
+        isActive: normalized.isActive,
+      }, { merge: true });
+      console.log('Repaired malformed Firestore session document:', sessionId);
+    } catch (error) {
+      console.error('Failed to repair malformed Firestore session document:', error);
+    }
+  }, []);
+
+  /*
+  const flushPendingFileUpdates = useCallback(async () => {
+    if (debounceTimeoutRef.current) {
+      clearTimeout(debounceTimeoutRef.current);
+      debounceTimeoutRef.current = null;
+    }
+
+    if (pendingFilesRef.current && sessionRef.current?.sessionId) {
+      `âœ… File created and persisted to Firestore: ${name}`,
+        const sessionDocRef = doc(db, 'sessions', sessionRef.current.sessionId);
+        await setDoc(sessionDocRef, { files: pendingFilesRef.current }, { merge: true });
+        console.log('âœ… Pending file changes flushed to Firestore');
+        pendingFilesRef.current = null;
+        console.error('âŒ Failed to flush file changes:', error);
+      }
+    }
+  }, []);
+  */
+
+  const flushPendingFileUpdates = useCallback(async () => {
+    if (debounceTimeoutRef.current) {
+      clearTimeout(debounceTimeoutRef.current);
+      debounceTimeoutRef.current = null;
+    }
+
+    if (pendingFilesRef.current && sessionRef.current?.sessionId) {
+      try {
+        const sessionDocRef = doc(db, 'sessions', sessionRef.current.sessionId);
+        await setDoc(sessionDocRef, { files: pendingFilesRef.current }, { merge: true });
+        console.log('Pending file changes flushed to Firestore');
+        pendingFilesRef.current = null;
+      } catch (error) {
+        console.error('Failed to flush file changes:', error);
+      }
+    }
+  }, []);
+
+  const persistFilesImmediately = useCallback(async (
+    updated: FileItem[],
+    successMessage: string,
+    warningMessage: string
+  ) => {
+    pendingFilesRef.current = updated;
+
+    if (debounceTimeoutRef.current) {
+      clearTimeout(debounceTimeoutRef.current);
+      debounceTimeoutRef.current = null;
+    }
+
+    if (!sessionRef.current?.sessionId) {
+      return;
+    }
+
+    try {
+      const sessionDocRef = doc(db, 'sessions', sessionRef.current.sessionId);
+      await setDoc(sessionDocRef, { files: updated }, { merge: true });
+      console.log(successMessage);
+      pendingFilesRef.current = null;
+    } catch (error) {
+      console.error(warningMessage, error);
+      addOutput('error', warningMessage);
+    }
+  }, [addOutput]);
+
+  const persistSessionSnapshot = useCallback(async (activeSession: Session) => {
+    try {
+      await setDoc(doc(db, 'sessions', activeSession.sessionId), {
+        sessionId: activeSession.sessionId,
+        name: activeSession.name,
+        hostId: activeSession.hostId,
+        hostName: activeSession.hostName,
+        participants: activeSession.participants,
+        files,
+        messages,
+        isActive: true,
+      }, { merge: true });
+      console.log('Session snapshot persisted to Firestore:', activeSession.sessionId);
+    } catch (error) {
+      console.error('Failed to persist session snapshot to Firestore:', error);
+    }
+  }, [files, messages]);
 
   // Fetch user's existing sessions from Firestore
   useEffect(() => {
@@ -315,13 +598,15 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  // Auto-restore last session on page load
+  // Sessions must be opened explicitly by the user.
   useEffect(() => {
     const restoreLastSession = async () => {
+      return;
+      /*
       if (!user || session || isConnecting) return;
 
       try {
-        const lastSessionId = localStorage.getItem('codeforge-last-session');
+        const lastSessionId = null;
         if (lastSessionId) {
           console.log('🔄 Restoring last session:', lastSessionId);
           addOutput('info', '🔄 Restoring your last session...');
@@ -332,11 +617,12 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
           if (!sessionSnap.exists()) {
             console.warn('❌ Session no longer exists');
-            localStorage.removeItem('codeforge-last-session');
             return;
           }
 
-          const data = sessionSnap.data() as SessionData;
+          const rawData = sessionSnap.data();
+          const data = normalizeSessionData(rawData, normalizedId);
+          void repairSessionDocument(normalizedId, rawData);
           const isHost = data.hostId === user.uid;
 
           // Reactivate if needed
@@ -345,7 +631,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
               await updateDoc(sessionRef, { isActive: true });
             } else {
               console.warn('❌ Session has ended');
-              localStorage.removeItem('codeforge-last-session');
               return;
             }
           }
@@ -366,29 +651,21 @@ export function SessionProvider({ children }: { children: ReactNode }) {
             participants: data.participants,
           });
 
-          // Load files
-          if (data.files?.length > 0) {
-            setFiles(data.files);
-            setCurrentFileId(data.files[0].id);
-          }
-
-          // Load messages
-          if (data.messages) {
-            setMessages(data.messages);
-          }
+          applyPersistedFiles(data.files);
+          applyPersistedMessages(data.messages);
 
           addOutput('success', `🎉 Restored session "${data.name}"!`);
         }
       } catch (error) {
         console.error('Failed to restore last session:', error);
-        localStorage.removeItem('codeforge-last-session');
       }
+      */
     };
 
     // Small delay to ensure user is fully loaded
     const timer = setTimeout(restoreLastSession, 100);
     return () => clearTimeout(timer);
-  }, [user, session, isConnecting]);
+  }, [user, session, isConnecting, addOutput, applyPersistedFiles, applyPersistedMessages, repairSessionDocument]);
 
   // Listen to session changes in Firestore
   useEffect(() => {
@@ -397,7 +674,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     const sessionRef = doc(db, 'sessions', session.sessionId);
     const unsubscribe = onSnapshot(sessionRef, (snapshot) => {
       if (snapshot.exists()) {
-        const data = snapshot.data() as SessionData;
+        const rawData = snapshot.data();
+        const data = normalizeSessionData(rawData, session.sessionId);
+        void repairSessionDocument(session.sessionId, rawData);
 
         // Update participants
         const myRole = data.participants[user.uid]?.role || 'viewer';
@@ -407,15 +686,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           role: myRole,
         } : null);
 
-        // Update files
-        if (data.files?.length > 0) {
-          setFiles(data.files);
+        if (!pendingFilesRef.current) {
+          applyPersistedFiles(data.files);
         }
 
-        // Update messages
-        if (data.messages) {
-          setMessages(data.messages);
-        }
+        applyPersistedMessages(data.messages);
 
         // Check if we were kicked
         if (!data.participants[user.uid] && data.hostId !== user.uid) {
@@ -430,7 +705,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     });
 
     return () => unsubscribe();
-  }, [session?.sessionId, user]);
+  }, [session?.sessionId, user, applyPersistedFiles, applyPersistedMessages, repairSessionDocument]);
 
   // Update online status and handle page unload
   useEffect(() => {
@@ -449,19 +724,27 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
     updateOnlineStatus(true);
 
-    const handleBeforeUnload = () => {
-      // On page unload, just mark online as false
-      // Note: Can't reliably do async in beforeunload, so we don't await
+    const flushAndMarkOffline = () => {
+      flushPendingFileUpdates().catch(() => {});
       updateOnlineStatus(false).catch(() => {});
     };
 
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => {
-      window.removeEventListener('beforeunload', handleBeforeUnload);
-      // When component unmounts, update online status
-      updateOnlineStatus(false).catch(() => {});
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        flushAndMarkOffline();
+      }
     };
-  }, [session?.sessionId, user]);
+
+    window.addEventListener('beforeunload', flushAndMarkOffline);
+    window.addEventListener('pagehide', flushAndMarkOffline);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      window.removeEventListener('beforeunload', flushAndMarkOffline);
+      window.removeEventListener('pagehide', flushAndMarkOffline);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      flushAndMarkOffline();
+    };
+  }, [session?.sessionId, user, flushPendingFileUpdates]);
 
   // File management
   const createFile = useCallback(async (name: string, language: string, parentId: string | null = null) => {
@@ -478,19 +761,22 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     setFiles(updated);
     setCurrentFileId(newFile.id);
 
-    // Persist to Firestore with error handling
-    if (session?.sessionId) {
-      try {
-        const sessionRef = doc(db, 'sessions', session.sessionId);
-        await updateDoc(sessionRef, { files: updated });
+    await persistFilesImmediately(
+      updated,
+      `File created and persisted to Firestore: ${name}`,
+      `Warning: File "${name}" created but not saved to server. Changes may be lost.`
+    );
+    /*
         console.log('✅ File created and persisted to Firestore:', name);
       } catch (error) {
         console.error('❌ Failed to persist file to Firestore:', error);
         addOutput('error', `❌ Warning: File "${name}" created but not saved to server. Changes may be lost.`);
       }
     }
-  }, [session?.sessionId, files, addOutput]);
+    */
+  }, [files, persistFilesImmediately]);
 
+  /*
   // Debounce ref for Firestore writes (free tier optimization)
   const debounceTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
   const pendingFilesRef = React.useRef<FileItem[] | null>(null);
@@ -513,12 +799,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       }
     }
   }, [session?.sessionId]);
+  */
 
   const updateFileContent = useCallback((id: string, content: string) => {
     const updated = files.map(f => f.id === id ? { ...f, content } : f);
     setFiles(updated);
 
-    // Debounce Firestore writes (500ms) - critical for free tier
+    // Debounce Firestore writes (150ms) to reduce the window where edits can be lost.
     if (session?.sessionId) {
       // Store for potential flush
       pendingFilesRef.current = updated;
@@ -529,7 +816,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       debounceTimeoutRef.current = setTimeout(async () => {
         try {
           const sessionRef = doc(db, 'sessions', session.sessionId);
-          await updateDoc(sessionRef, { files: updated });
+          await setDoc(sessionRef, { files: updated }, { merge: true });
           console.log('✅ File content persisted to Firestore for file:', id);
           pendingFilesRef.current = null;
           debounceTimeoutRef.current = null;
@@ -537,7 +824,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           console.error('❌ Failed to persist file content to Firestore:', error);
           addOutput('error', `❌ Warning: File changes not saved to server. Changes may be lost.`);
         }
-      }, 500);
+      }, 150);
     }
   }, [session?.sessionId, files, addOutput]);
 
@@ -555,7 +842,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     if (session?.sessionId) {
       try {
         const sessionRef = doc(db, 'sessions', session.sessionId);
-        await updateDoc(sessionRef, { files: updated });
+        await setDoc(sessionRef, { files: updated }, { merge: true });
         console.log('✅ File deleted and persisted to Firestore:', id);
       } catch (error) {
         console.error('❌ Failed to persist file deletion to Firestore:', error);
@@ -572,7 +859,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     if (session?.sessionId) {
       try {
         const sessionRef = doc(db, 'sessions', session.sessionId);
-        await updateDoc(sessionRef, { files: updated });
+        await setDoc(sessionRef, { files: updated }, { merge: true });
         console.log('✅ File renamed and persisted to Firestore:', newName);
       } catch (error) {
         console.error('❌ Failed to persist file rename to Firestore:', error);
@@ -599,7 +886,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     if (session?.sessionId) {
       try {
         const sessionRef = doc(db, 'sessions', session.sessionId);
-        await updateDoc(sessionRef, { files: updated });
+        await setDoc(sessionRef, { files: updated }, { merge: true });
         console.log('✅ Folder created and persisted to Firestore:', name);
       } catch (error) {
         console.error('❌ Failed to persist folder to Firestore:', error);
@@ -616,7 +903,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     if (session?.sessionId) {
       try {
         const sessionRef = doc(db, 'sessions', session.sessionId);
-        await updateDoc(sessionRef, { files: updated });
+        await setDoc(sessionRef, { files: updated }, { merge: true });
         console.log('✅ Folder renamed and persisted to Firestore:', newName);
       } catch (error) {
         console.error('❌ Failed to persist folder rename to Firestore:', error);
@@ -652,7 +939,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     if (session?.sessionId) {
       try {
         const sessionRef = doc(db, 'sessions', session.sessionId);
-        await updateDoc(sessionRef, { files: updated });
+        await setDoc(sessionRef, { files: updated }, { merge: true });
         console.log('✅ Folder deleted and persisted to Firestore:', id);
       } catch (error) {
         console.error('❌ Failed to persist folder deletion to Firestore:', error);
@@ -679,10 +966,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       const updated = [...prev, newMessage];
       // Sync to Firestore
       const sessionRef = doc(db, 'sessions', session.sessionId);
-      updateDoc(sessionRef, { messages: updated });
+      void setDoc(sessionRef, { messages: updated }, { merge: true }).catch((error) => {
+        console.error('Failed to persist chat message:', error);
+        addOutput('error', 'Warning: Chat message was sent locally but not saved to server.');
+      });
       return updated;
     });
-  }, [user, session]);
+  }, [user, session, addOutput]);
 
   // Socket.IO connection management
   useEffect(() => {
@@ -702,25 +992,23 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     newSocket.on('connect', () => {
       setIsConnected(true);
       setConnectionError(null);
+      joinedSocketSessionKeyRef.current = null;
+      pendingSocketSessionKeyRef.current = null;
       console.log('Connected to backend');
+      /*
 
-      // Re-join session room if we already have an active session (handles backend restart/reconnect)
-      const currentSession = sessionRef.current;
-      const currentUser = userRef.current;
-      if (currentSession?.sessionId && currentUser) {
         console.log('🔄 Rejoining session room after reconnect:', currentSession.sessionId);
-        newSocket.emit('join_session', {
-          session_id: currentSession.sessionId,
-          sessionId: currentSession.sessionId,
-          userId: currentUser.uid,
-          userName: currentUser.displayName || currentUser.email?.split('@')[0] || 'User',
-          userEmail: currentUser.email,
-        });
       }
+    });
+
+      */
+
     });
 
     newSocket.on('disconnect', () => {
       setIsConnected(false);
+      joinedSocketSessionKeyRef.current = null;
+      pendingSocketSessionKeyRef.current = null;
       console.log('Disconnected from backend');
     });
 
@@ -777,15 +1065,32 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       }
     });
 
+    newSocket.on('deployment_progress', (data) => {
+      if (!data || typeof data !== 'object') return;
+
+      const action = data.action === 'dockerhub' || data.action === 'render' || data.action === 'download'
+        ? data.action
+        : 'download';
+      const percent = typeof data.percent === 'number' ? Math.max(0, Math.min(100, data.percent)) : 0;
+      const message = typeof data.message === 'string' ? data.message : 'Deploying...';
+      const active = Boolean(data.active);
+
+      setDeployProgress({ action, percent, message, active });
+    });
+
     setSocket(newSocket);
 
     return () => {
+      joinedSocketSessionKeyRef.current = null;
+      pendingSocketSessionKeyRef.current = null;
       newSocket.disconnect();
       setSocket(null);
       setIsConnected(false);
+      setDeployProgress(null);
     };
   }, [user, addOutput]);
 
+  /*
   // Join session via Socket.IO when session changes
   useEffect(() => {
     if (!socket || !session?.sessionId || !user) return;
@@ -802,6 +1107,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       if (response?.error === 'Session not found') {
         console.log('Session not found on backend. Attempting resurrection...');
         if (session.hostId === user.uid) {
+          void persistSessionSnapshot(session).finally(() => {
           socket.emit('create_session', {
             settings: { name: session.name },
             session_id: session.sessionId
@@ -812,11 +1118,31 @@ export function SessionProvider({ children }: { children: ReactNode }) {
               addOutput('error', `❌ Failed to restore session: ${createRes?.error}`);
             }
           });
+          });
         } else {
           addOutput('error', '❌ Session has ended (Host disconnected).');
         }
+      } else if (response?.error === 'Session is inactive') {
+        if (session.hostId === user.uid) {
+          addOutput('info', 'ðŸ”„ Reactivating your inactive session...');
+          void persistSessionSnapshot(session).finally(() => {
+            socket.emit('create_session', {
+              settings: { name: session.name },
+              session_id: session.sessionId
+            }, (createRes: any) => {
+              if (createRes?.success) {
+                addOutput('success', 'ðŸŽ‰ Session reactivated.');
+              } else {
+                addOutput('error', `âŒ Failed to reactivate session: ${createRes?.error}`);
+              }
+            });
+          });
+        } else {
+          addOutput('error', 'âŒ Session is inactive. Ask the host to reopen it.');
+        }
       } else if (response?.error) {
-        console.error('Join failed:', response.error);
+        console.warn('Join failed:', response.error);
+        addOutput('error', `âŒ ${response.error}`);
       }
     });
 
@@ -825,7 +1151,105 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         socket.emit('leave_session', { sessionId: session.sessionId });
       }
     };
-  }, [socket, session?.sessionId, user]);
+  }, [socket, session, user, addOutput, persistSessionSnapshot]);
+  */
+
+  // Join session via Socket.IO when the active connection/session pair changes
+  useEffect(() => {
+    if (!socket || !isConnected || !socket.id || !session?.sessionId || !user) return;
+
+    const sessionId = session.sessionId;
+    const joinKey = `${socket.id}:${sessionId}:${user.uid}`;
+    if (
+      joinedSocketSessionKeyRef.current === joinKey ||
+      pendingSocketSessionKeyRef.current === joinKey
+    ) {
+      return;
+    }
+
+    pendingSocketSessionKeyRef.current = joinKey;
+
+    const joinData = {
+      session_id: sessionId,
+      sessionId,
+      userId: user.uid,
+      userName: user.displayName || user.email?.split('@')[0] || 'User',
+      userEmail: user.email
+    };
+
+    socket.emit('join_session', joinData, (response: any) => {
+      if (pendingSocketSessionKeyRef.current === joinKey) {
+        pendingSocketSessionKeyRef.current = null;
+      }
+
+      if (response?.success) {
+        joinedSocketSessionKeyRef.current = joinKey;
+        return;
+      }
+
+      if (joinedSocketSessionKeyRef.current === joinKey) {
+        joinedSocketSessionKeyRef.current = null;
+      }
+
+      const currentSession = sessionRef.current;
+      if (!currentSession || currentSession.sessionId !== sessionId) {
+        return;
+      }
+
+      if (response?.error === 'Session not found') {
+        console.log('Session not found on backend. Attempting resurrection...');
+        if (currentSession.hostId === user.uid) {
+          void persistSessionSnapshot(currentSession).finally(() => {
+            socket.emit('create_session', {
+              settings: { name: currentSession.name },
+              session_id: currentSession.sessionId
+            }, (createRes: any) => {
+              if (createRes?.success) {
+                joinedSocketSessionKeyRef.current = joinKey;
+                addOutput('success', 'Session restored on server.');
+              } else {
+                addOutput('error', `Failed to restore session: ${createRes?.error}`);
+              }
+            });
+          });
+        } else {
+          addOutput('error', 'Session has ended (host disconnected).');
+        }
+      } else if (response?.error === 'Session is inactive') {
+        if (currentSession.hostId === user.uid) {
+          addOutput('info', 'Reactivating your inactive session...');
+          void persistSessionSnapshot(currentSession).finally(() => {
+            socket.emit('create_session', {
+              settings: { name: currentSession.name },
+              session_id: currentSession.sessionId
+            }, (createRes: any) => {
+              if (createRes?.success) {
+                joinedSocketSessionKeyRef.current = joinKey;
+                addOutput('success', 'Session reactivated.');
+              } else {
+                addOutput('error', `Failed to reactivate session: ${createRes?.error}`);
+              }
+            });
+          });
+        } else {
+          addOutput('error', 'Session is inactive. Ask the host to reopen it.');
+        }
+      } else if (response?.error) {
+        console.warn('Join failed:', response.error);
+        addOutput('error', response.error);
+      }
+    });
+  }, [
+    socket,
+    isConnected,
+    socket?.id,
+    session?.sessionId,
+    user?.uid,
+    user?.displayName,
+    user?.email,
+    addOutput,
+    persistSessionSnapshot,
+  ]);
 
   // Code execution
   const executeCode = useCallback((language: string, code: string) => {
@@ -929,9 +1353,6 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         participants: { [user.uid]: participant },
       });
 
-      // Store session ID for auto-restore on page refresh
-      localStorage.setItem('codeforge-last-session', sessionId);
-
       addOutput('success', `🎉 Session "${name}" created! Share code: ${sessionId}`);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to create session';
@@ -941,7 +1362,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     } finally {
       setIsConnecting(false);
     }
-  }, [user, files, addOutput]);
+  }, [user, addOutput]);
 
   // Join an existing session
   const joinSession = useCallback(async (sessionId: string) => {
@@ -962,7 +1383,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         throw new Error('Session not found. Please check the session code.');
       }
 
-      const data = sessionSnap.data() as SessionData;
+      const rawData = sessionSnap.data();
+      const data = normalizeSessionData(rawData, normalizedId);
+      void repairSessionDocument(normalizedId, rawData);
 
       if (!data.isActive) {
         throw new Error('This session has ended.');
@@ -998,18 +1421,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       });
 
       // Store session ID for auto-restore on page refresh
-      localStorage.setItem('codeforge-last-session', normalizedId);
 
-      // Load session files
-      if (data.files?.length > 0) {
-        setFiles(data.files);
-        setCurrentFileId(data.files[0].id);
-      }
-
-      // Load messages
-      if (data.messages) {
-        setMessages(data.messages);
-      }
+      applyPersistedFiles(data.files);
+      applyPersistedMessages(data.messages);
 
       addOutput('success', `🎉 Joined session "${data.name}"!`);
     } catch (error) {
@@ -1018,7 +1432,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     } finally {
       setIsConnecting(false);
     }
-  }, [user, addOutput]);
+  }, [user, addOutput, applyPersistedFiles, applyPersistedMessages, repairSessionDocument]);
 
   // Rejoin an existing session
   const rejoinSession = useCallback(async (sessionId: string) => {
@@ -1039,7 +1453,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         throw new Error('Session no longer exists.');
       }
 
-      const data = sessionSnap.data() as SessionData;
+      const rawData = sessionSnap.data();
+      const data = normalizeSessionData(rawData, normalizedId);
+      void repairSessionDocument(normalizedId, rawData);
       const isHost = data.hostId === user.uid;
 
       if (!data.isActive) {
@@ -1076,18 +1492,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       });
 
       // Store session ID for auto-restore on page refresh
-      localStorage.setItem('codeforge-last-session', normalizedId);
 
-      // Load session files
-      if (data.files?.length > 0) {
-        setFiles(data.files);
-        setCurrentFileId(data.files[0].id);
-      }
-
-      // Load messages
-      if (data.messages) {
-        setMessages(data.messages);
-      }
+      applyPersistedFiles(data.files);
+      applyPersistedMessages(data.messages);
 
       addOutput('success', `🎉 Rejoined session "${data.name}"!`);
     } catch (error) {
@@ -1096,13 +1503,14 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     } finally {
       setIsConnecting(false);
     }
-  }, [user, addOutput]);
+  }, [user, addOutput, applyPersistedFiles, applyPersistedMessages, repairSessionDocument]);
 
   // Leave the current session
   const leaveSession = useCallback(async () => {
     if (!session?.sessionId || !user) return;
 
-    // CRITICAL: Flush any pending debounced file updates before leaving
+    await flushPendingFileUpdates();
+    /*
     if (debounceTimeoutRef.current) {
       clearTimeout(debounceTimeoutRef.current);
     }
@@ -1117,14 +1525,22 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       }
     }
 
+    */
     const sessionId = session.sessionId;
+
+    if (socket) {
+      socket.emit('leave_session', { sessionId });
+    }
+    joinedSocketSessionKeyRef.current = null;
+    pendingSocketSessionKeyRef.current = null;
 
     try {
       const sessionRef = doc(db, 'sessions', sessionId);
 
       if (session.role === 'host') {
-        await updateDoc(sessionRef, { isActive: false });
-        await deleteDoc(sessionRef);
+        await updateDoc(sessionRef, {
+          [`participants.${user.uid}.isOnline`]: false,
+        });
       } else {
         // Remove self from participants
         const sessionSnap = await getDoc(sessionRef);
@@ -1145,16 +1561,58 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       setCurrentFileId(null);
 
       // Clear stored session ID to prevent auto-restore
-      localStorage.removeItem('codeforge-last-session');
 
       refreshMySessions();
     }
-  }, [session, user, refreshMySessions]);
+  }, [session, user, socket, refreshMySessions, flushPendingFileUpdates]);
+
+  const deleteSession = useCallback(async () => {
+    if (!session?.sessionId || !user || session.role !== 'host' || session.hostId !== user.uid) return;
+
+    await flushPendingFileUpdates();
+
+    const sessionId = session.sessionId;
+
+    if (socket) {
+      socket.emit('leave_session', { sessionId });
+    }
+    joinedSocketSessionKeyRef.current = null;
+    pendingSocketSessionKeyRef.current = null;
+
+    try {
+      await deleteDoc(doc(db, 'sessions', sessionId));
+    } catch (error) {
+      console.error('Error deleting session:', error);
+    } finally {
+      setSession(null);
+      setMessages([]);
+      setOutput([]);
+      setDeployProgress(null);
+      setConnectionError(null);
+      setFiles([]);
+      setCurrentFileId(null);
+      refreshMySessions();
+    }
+  }, [session, user, socket, refreshMySessions, flushPendingFileUpdates]);
 
   // Change user role (host/co-host only)
   const changeUserRole = useCallback(async (userId: string, role: Role) => {
-    if (!session?.sessionId) return;
-    if (session.role !== 'host' && session.role !== 'co-host') return;
+    if (!session?.sessionId || !user) return;
+
+    const actorRole = session.participants[user.uid]?.role || session.role;
+    const targetParticipant = session.participants[userId];
+
+    if (!targetParticipant || userId === user.uid) return;
+
+    if (actorRole === 'host') {
+      if (targetParticipant.role === 'host' || role === 'host') return;
+    } else if (actorRole === 'co-host') {
+      const canManageTarget = targetParticipant.role === 'editor' || targetParticipant.role === 'viewer';
+      const canAssignRole = role === 'editor' || role === 'viewer';
+      if (!canManageTarget || !canAssignRole) return;
+    } else {
+      return;
+    }
 
     try {
       const sessionRef = doc(db, 'sessions', session.sessionId);
@@ -1164,11 +1622,14 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     } catch (error) {
       console.error('Error changing role:', error);
     }
-  }, [session]);
+  }, [session, user]);
 
   // Kick user (host only)
   const kickUser = useCallback(async (userId: string) => {
-    if (!session?.sessionId || session.role !== 'host') return;
+    if (!session?.sessionId || session.role !== 'host' || !user) return;
+
+    const targetParticipant = session.participants[userId];
+    if (!targetParticipant || userId === user.uid || targetParticipant.role === 'host') return;
 
     try {
       const sessionRef = doc(db, 'sessions', session.sessionId);
@@ -1182,7 +1643,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     } catch (error) {
       console.error('Error kicking user:', error);
     }
-  }, [session]);
+  }, [session, user]);
 
   // Terminal command
   const sendTerminalCommand = useCallback((command: string) => {
@@ -1251,6 +1712,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         output,
         clearOutput,
         addOutput,
+        deployProgress,
         isExecuting,
         executeCode,
         sendExecutionInput,
@@ -1259,6 +1721,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         joinSession,
         rejoinSession,
         leaveSession,
+        deleteSession,
         changeUserRole,
         kickUser,
         sendTerminalCommand,

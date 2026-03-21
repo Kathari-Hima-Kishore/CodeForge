@@ -49,6 +49,8 @@ export function IdeHeader() {
   const [dockerHubActualUsername, setDockerHubActualUsername] = useState('');
   const [isLoadingDockerHubRepos, setIsLoadingDockerHubRepos] = useState(false);
   const [dockerHubReposError, setDockerHubReposError] = useState('');
+  const [repoMode, setRepoMode] = useState<'auto' | 'create' | 'select' | null>(null);
+  const [repoDropdownOpen, setRepoDropdownOpen] = useState(false);
   const [renderApiKey, setRenderApiKey] = useState('');
   const [renderServiceName, setRenderServiceName] = useState('');
   const [renderRegion, setRenderRegion] = useState('oregon');
@@ -946,39 +948,101 @@ export function IdeHeader() {
                           className="h-9 text-sm"
                         />
                       </div>
-                      <div className="space-y-1">
-                        <Label htmlFor="render-dh-repo" className="text-xs">Repository Name <span className="text-red-400">*</span></Label>
-                        <div className="flex gap-1.5">
-                          <select
-                            id="render-dh-repo"
-                            value={selectedDockerHubRepo}
-                            onChange={(e) => {
-                              setSelectedDockerHubRepo(e.target.value);
-                              setDockerHubCustomRepo('');
-                            }}
-                            className="flex-1 h-9 px-3 rounded-md border border-input bg-background text-sm"
-                            disabled={isLoadingDockerHubRepos || dockerHubRepos.length === 0}
-                          >
-                            <option value="">{isLoadingDockerHubRepos ? 'Loading...' : dockerHubRepos.length > 0 ? 'Select a repository' : 'No repositories found'}</option>
-                            {dockerHubRepos.map(repo => (
-                              <option key={repo} value={repo}>{repo}</option>
-                            ))}
-                          </select>
-                          <Button
+                      <div className="space-y-3">
+                        <Label htmlFor="render-dh-repo" className="text-xs">Repository <span className="text-red-400">*</span></Label>
+
+                        {/* Mode Selector Button */}
+                        <div className="relative">
+                          <button
                             type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={fetchDockerHubRepos}
-                            disabled={!dockerHubUsername || !dockerHubPassword || isLoadingDockerHubRepos}
-                            className="h-9 text-xs"
+                            onClick={() => setRepoDropdownOpen(!repoDropdownOpen)}
+                            className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm flex items-center justify-between hover:bg-background/80"
                           >
-                            {isLoadingDockerHubRepos ? '...' : '⟳'}
-                          </Button>
+                            <span className="text-muted-foreground">
+                              {repoMode === null && 'Select option...'}
+                              {repoMode === 'auto' && 'Auto create'}
+                              {repoMode === 'create' && 'Create new repo'}
+                              {repoMode === 'select' && 'Select existing'}
+                            </span>
+                            <span className="text-xs">▼</span>
+                          </button>
+
+                          {repoDropdownOpen && (
+                            <div className="absolute top-full left-0 right-0 mt-1 border border-input rounded-md bg-background shadow-md z-50">
+                              <div
+                                className="h-9 px-3 flex items-center hover:bg-accent cursor-pointer text-sm"
+                                onClick={() => {
+                                  setRepoMode('auto');
+                                  setSelectedDockerHubRepo('');
+                                  setDockerHubCustomRepo('');
+                                  setRepoDropdownOpen(false);
+                                }}
+                              >
+                                Auto create
+                              </div>
+                              <div
+                                className="h-9 px-3 flex items-center hover:bg-accent cursor-pointer text-sm border-t border-border/30"
+                                onClick={() => {
+                                  setRepoMode('create');
+                                  setDockerHubCustomRepo('');
+                                  setSelectedDockerHubRepo('');
+                                  setRepoDropdownOpen(false);
+                                }}
+                              >
+                                Create new repo
+                              </div>
+                              <div
+                                className="h-9 px-3 flex items-center hover:bg-accent cursor-pointer text-sm border-t border-border/30 whitespace-nowrap"
+                                onClick={() => {
+                                  setRepoMode('select');
+                                  if (dockerHubRepos.length === 0) {
+                                    fetchDockerHubRepos();
+                                  }
+                                  setRepoDropdownOpen(false);
+                                }}
+                              >
+                                Select existing
+                              </div>
+                            </div>
+                          )}
                         </div>
-                        {dockerHubReposError && (
-                          <p className="text-xs text-red-400">{dockerHubReposError}</p>
+
+                        {/* Create New Repo Input */}
+                        {repoMode === 'create' && (
+                          <Input
+                            placeholder="Enter repository name"
+                            value={dockerHubCustomRepo}
+                            onChange={(e) => {
+                              setDockerHubCustomRepo(e.target.value.toLowerCase().replace(/[^a-z0-9-_]/g, '-'));
+                              setSelectedDockerHubRepo('');
+                            }}
+                            className="h-9 text-sm"
+                          />
                         )}
-                        <p className="text-[10px] text-muted-foreground">Select from your Docker Hub repositories</p>
+
+                        {/* Select Existing Repo Dropdown */}
+                        {repoMode === 'select' && (
+                          <>
+                            <select
+                              id="render-dh-repo"
+                              value={selectedDockerHubRepo}
+                              onChange={(e) => {
+                                setSelectedDockerHubRepo(e.target.value);
+                                setDockerHubCustomRepo('');
+                              }}
+                              className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm"
+                              disabled={isLoadingDockerHubRepos || dockerHubRepos.length === 0}
+                            >
+                              <option value="">{isLoadingDockerHubRepos ? 'Loading...' : dockerHubRepos.length > 0 ? 'Select a repository' : 'No repositories found'}</option>
+                              {dockerHubRepos.map(repo => (
+                                <option key={repo} value={repo}>{repo}</option>
+                              ))}
+                            </select>
+                            {dockerHubReposError && (
+                              <p className="text-xs text-red-400">{dockerHubReposError}</p>
+                            )}
+                          </>
+                        )}
                       </div>
                     </div>
 

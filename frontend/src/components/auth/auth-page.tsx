@@ -73,13 +73,14 @@ function AmbientOrbs() {
 type AuthMode = 'login' | 'register' | 'forgot';
 
 function AuthForm() {
-  const { login, register, resetPassword, error, loading, clearError, clearMessage } = useAuth();
+  const { login, register, resetPassword, error, loading, message, clearError, clearMessage } = useAuth();
   const [mode, setMode] = useState<AuthMode>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [localError, setLocalError] = useState('');
   const [passwordChecks, setPasswordChecks] = useState<PasswordChecks>({ minLength: false, hasUppercase: false, hasLowercase: false, hasNumber: false });
+  const [showUnverifiedModal, setShowUnverifiedModal] = useState(false);
 
   // Update password checks on change
   useEffect(() => {
@@ -106,6 +107,7 @@ function AuthForm() {
 
       // Login failed — email not verified, user was signed out
       if (msg === '__NOT_VERIFIED__') {
+        setShowUnverifiedModal(true);
         return;
       }
 
@@ -132,8 +134,10 @@ function AuthForm() {
     setMode(m);
     setLocalError('');
     clearError();
+    clearMessage();
     setPassword('');
-  }, [mode, clearError]);
+    setShowUnverifiedModal(false); // Clear unverified modal when switching modes
+  }, [mode, clearError, clearMessage]);
 
   const displayError = localError || error;
   // Password check list for register mode
@@ -219,6 +223,12 @@ function AuthForm() {
           </div>
         )}
 
+        {message && (
+          <div className="text-sm py-3 px-3" style={{ color: '#10b981', background: 'rgba(16,185,129,0.08)', border: '2px solid rgba(16,185,129,0.3)', borderLeft: '4px solid #10b981' }}>
+            {message}
+          </div>
+        )}
+
         {displayError && (
           <div className="text-sm py-3 px-3" style={{ color: '#f87171', background: 'rgba(239,68,68,0.08)', border: '2px solid rgba(239,68,68,0.3)', borderLeft: '4px solid #ef4444' }}>
             {displayError}
@@ -257,6 +267,84 @@ function AuthForm() {
           </button>
         )}
       </div>
+
+      {/* Unverified Email Modal */}
+      {showUnverifiedModal && (
+        <div
+          className="fixed inset-0 overflow-hidden flex items-center justify-center pointer-events-none"
+          style={{ zIndex: 50 }}
+        >
+          {/* Semi-transparent dark backdrop */}
+          <div
+            className="absolute inset-0 pointer-events-auto"
+            style={{
+              background: 'rgba(0, 0, 0, 0.8)',
+              backdropFilter: 'blur(2px)',
+            }}
+          />
+
+          {/* Ambient orbs behind modal */}
+          <div className="absolute inset-0 overflow-hidden pointer-events-none" aria-hidden="true">
+            <div
+              className="absolute -top-40 -right-40 w-[600px] h-[600px]"
+              style={{
+                background: 'radial-gradient(circle, rgba(37,99,235,0.35) 0%, rgba(59,130,246,0.15) 40%, transparent 70%)',
+                animation: 'float-slow 18s ease-in-out infinite',
+              }}
+            />
+            <div
+              className="absolute -bottom-32 -left-20 w-[500px] h-[500px]"
+              style={{
+                background: 'radial-gradient(circle, rgba(234,179,8,0.12) 0%, rgba(234,179,8,0.05) 50%, transparent 70%)',
+                animation: 'float-slow 28s ease-in-out infinite',
+              }}
+            />
+          </div>
+
+          {/* Modal content */}
+          <div
+            className="relative bg-white/5 border border-white/20 rounded-lg backdrop-blur-xl pointer-events-auto"
+            style={{
+              width: '420px',
+              padding: '32px',
+              background: 'linear-gradient(135deg, rgba(15,30,58,0.8) 0%, rgba(3,6,15,0.9) 100%)',
+              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.6)',
+            }}
+          >
+            {/* Header */}
+            <div className="flex items-center gap-3 mb-6">
+              <div className="relative">
+                <div className="absolute inset-0 bg-amber-500/20 rounded-full blur-md" />
+                <ShieldCheck className="w-6 h-6 text-amber-400 relative z-10" />
+              </div>
+              <h3 className="text-lg font-bold text-white tracking-wide" style={{ fontFamily: 'Outfit, sans-serif' }}>
+                Email Verification Required
+              </h3>
+            </div>
+
+            {/* Message */}
+            <div className="mb-8 space-y-3">
+              <p className="text-sm text-slate-300 leading-relaxed">
+                Your email address is not verified yet. Please check your inbox (and spam folder) for a verification email and click the link to activate your account.
+              </p>
+              <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/20">
+                <p className="text-xs text-amber-200">
+                  💡 <strong>Tip:</strong> If you don't see the email, check your spam folder or try logging in again to resend it.
+                </p>
+              </div>
+            </div>
+
+            {/* Action button */}
+            <button
+              onClick={() => setShowUnverifiedModal(false)}
+              className="w-full h-11 bg-white/10 hover:bg-white/15 border border-white/20 rounded-lg text-white font-semibold text-sm transition-all duration-200 flex items-center justify-center gap-2"
+              style={{ fontFamily: 'DM Sans, sans-serif' }}
+            >
+              Got it
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

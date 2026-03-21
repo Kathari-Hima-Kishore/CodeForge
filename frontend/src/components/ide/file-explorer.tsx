@@ -20,10 +20,13 @@ const LANGUAGES = [
   { id: 'css',        name: 'CSS',        ext: '.css',  dot: 'bg-pink-400',    textColor: 'text-pink-400' },
   { id: 'javascript', name: 'JavaScript', ext: '.js',   dot: 'bg-yellow-400',  textColor: 'text-yellow-400' },
   { id: 'typescript', name: 'TypeScript', ext: '.ts',   dot: 'bg-blue-400',    textColor: 'text-blue-400' },
+  { id: 'json',       name: 'JSON',       ext: '.json', dot: 'bg-amber-300',   textColor: 'text-amber-300' },
   { id: 'python',     name: 'Python',     ext: '.py',   dot: 'bg-emerald-400', textColor: 'text-emerald-400' },
   { id: 'java',       name: 'Java',       ext: '.java', dot: 'bg-orange-400',  textColor: 'text-orange-400' },
   { id: 'c',          name: 'C',          ext: '.c',    dot: 'bg-slate-400',   textColor: 'text-slate-400' },
   { id: 'cpp',        name: 'C++',        ext: '.cpp',  dot: 'bg-sky-300',     textColor: 'text-sky-300' },
+  { id: 'dotenv',     name: 'Environment', ext: '.env', dot: 'bg-lime-400',    textColor: 'text-lime-400' },
+  { id: 'requirements', name: 'Requirements', ext: '.txt', dot: 'bg-purple-400', textColor: 'text-purple-400' },
 ];
 
 function getLangConfig(language: string) {
@@ -68,7 +71,15 @@ export function FileExplorer({ isCollapsed = false, onCollapse }: { isCollapsed?
 
   const handleCreateFile = (langId: string, parentId: string | null = null) => {
     const lang = LANGUAGES.find(l => l.id === langId);
-    createFile(`untitled${lang?.ext || '.txt'}`, langId, parentId);
+    let fileName = `untitled${lang?.ext || '.txt'}`;
+
+    if (langId === 'dotenv') {
+      fileName = '.env';
+    } else if (langId === 'requirements') {
+      fileName = 'requirements.txt';
+    }
+
+    createFile(fileName, langId, parentId);
     setIsCreating(false);
     if (parentId) setExpandedFolders(prev => new Set([...prev, parentId]));
   };

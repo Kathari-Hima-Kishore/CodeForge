@@ -10,7 +10,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   Loader2, Plus, LogIn, LogOut, ArrowLeft, Users,
   Clock, Crown, RefreshCw, ChevronRight, Terminal,
-  FolderOpen, CodeXml,
+  FolderOpen, AlertTriangle,
 } from 'lucide-react';
 
 type SessionMode = 'select' | 'create' | 'join';
@@ -31,6 +31,7 @@ export function SessionDialog() {
   const [sessionName, setSessionName] = useState('');
   const [sessionId, setSessionId] = useState('');
   const [error, setError] = useState('');
+  const [showSessionNotFoundModal, setShowSessionNotFoundModal] = useState(false);
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -49,8 +50,13 @@ export function SessionDialog() {
     if (!sessionId.trim()) { setError('Please enter a session code'); return; }
     try {
       await joinSession(sessionId.trim());
-    } catch {
-      setError('Failed to join session');
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : '';
+      if (errorMessage.includes('Session not found')) {
+        setShowSessionNotFoundModal(true);
+      } else {
+        setError('Failed to join session');
+      }
     }
   };
 
@@ -84,8 +90,8 @@ export function SessionDialog() {
   const initials = userName.slice(0, 2).toUpperCase();
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-[#0a0a0f] p-4">
-      <div className="relative z-10 w-full max-w-[410px]">
+    <div className="min-h-screen overflow-y-auto bg-[#0a0a0f] p-4">
+      <div className="relative z-10 mx-auto w-full max-w-[410px] py-6">
 
         {/* Branding */}
         <div className="text-center mb-10">
@@ -331,6 +337,87 @@ export function SessionDialog() {
 
           </div>
         </div>
+
+        {/* Session Not Found Modal */}
+        {showSessionNotFoundModal && (
+          <div
+            className="fixed inset-0 overflow-hidden flex items-center justify-center pointer-events-none"
+            style={{ zIndex: 50 }}
+          >
+            {/* Semi-transparent dark backdrop */}
+            <div
+              className="absolute inset-0 pointer-events-auto"
+              style={{
+                background: 'rgba(0, 0, 0, 0.8)',
+                backdropFilter: 'blur(2px)',
+              }}
+            />
+
+            {/* Ambient orbs behind modal */}
+            <div className="absolute inset-0 overflow-hidden pointer-events-none" aria-hidden="true">
+              <div
+                className="absolute -top-40 -right-40 w-[600px] h-[600px]"
+                style={{
+                  background: 'radial-gradient(circle, rgba(37,99,235,0.35) 0%, rgba(59,130,246,0.15) 40%, transparent 70%)',
+                  animation: 'float-slow 18s ease-in-out infinite',
+                }}
+              />
+              <div
+                className="absolute -bottom-32 -left-20 w-[500px] h-[500px]"
+                style={{
+                  background: 'radial-gradient(circle, rgba(234,179,8,0.12) 0%, rgba(234,179,8,0.05) 50%, transparent 70%)',
+                  animation: 'float-slow 28s ease-in-out infinite',
+                }}
+              />
+            </div>
+
+            {/* Modal content */}
+            <div
+              className="relative bg-white/5 border border-white/20 rounded-lg backdrop-blur-xl pointer-events-auto"
+              style={{
+                width: '420px',
+                padding: '32px',
+                background: 'linear-gradient(135deg, rgba(15,30,58,0.8) 0%, rgba(3,6,15,0.9) 100%)',
+                boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.6)',
+              }}
+            >
+              {/* Header */}
+              <div className="flex items-center gap-3 mb-6">
+                <div className="relative">
+                  <div className="absolute inset-0 bg-red-500/20 rounded-full blur-md" />
+                  <AlertTriangle className="w-6 h-6 text-red-400 relative z-10" />
+                </div>
+                <h3 className="text-lg font-bold text-white tracking-wide" style={{ fontFamily: 'Outfit, sans-serif' }}>
+                  Session Not Found
+                </h3>
+              </div>
+
+              {/* Message */}
+              <div className="mb-8 space-y-3">
+                <p className="text-sm text-slate-300 leading-relaxed">
+                  The session code "<strong className="text-white">{sessionId}</strong>" doesn't exist or has expired. Please double-check the code and try again.
+                </p>
+                <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/20">
+                  <p className="text-xs text-amber-200">
+                    💡 <strong>Tip:</strong> Session codes are case-sensitive and 8 characters long (e.g., ABC123XY).
+                  </p>
+                </div>
+              </div>
+
+              {/* Action button */}
+              <button
+                onClick={() => {
+                  setShowSessionNotFoundModal(false);
+                  setSessionId(''); // Clear the invalid session ID
+                }}
+                className="w-full h-11 bg-white/10 hover:bg-white/15 border border-white/20 rounded-lg text-white font-semibold text-sm transition-all duration-200 flex items-center justify-center gap-2"
+                style={{ fontFamily: 'DM Sans, sans-serif' }}
+              >
+                Got it
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

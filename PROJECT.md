@@ -46,7 +46,7 @@ NEXT_PUBLIC_BACKEND_URL=http://localhost:5001
 ```bash
 cd backend
 # No .env required (backend uses defaults)
-# PORT: 5001 (auto-allocates if busy, actual port written to frontend/.env)
+# PORT: 5001 (fixed by default; change backend/.env if needed)
 ```
 
 ### 3. Get Firebase Credentials
@@ -152,7 +152,7 @@ npm run lint && npm run typecheck   # Run both
 ### Backend
 ```bash
 cd backend
-npm run dev                         # Start with nodemon (auto-reload)
+npm run dev                         # Start stable backend process
 npm start                           # Production start
 ```
 
@@ -170,7 +170,7 @@ npm start                           # Production start
 | Service | Port | Auto-allocates | Notes |
 |---------|------|---|---|
 | Frontend | 9002 | No | Fixed port |
-| Backend | 5001 | Yes | Auto-increments if busy (5001→5002→5003...) |
+| Backend | 5001 | No | Fixed port by default; set `backend/.env` to change it |
 
 ### Session Persistence
 - **Frontend**: Creates session in Firestore (collection: `sessions`)
@@ -371,10 +371,10 @@ cd backend && npm run dev
 cd frontend && npm run dev:no-open
 ```
 
-**Backend Port Changes (5001 → 5002 → 5003...)**
-- Intentional: Backend auto-allocates free port
-- Actual port written to `frontend/.env` automatically
-- To use fixed port: Update `backend/index.js` CONFIG.port or ensure 5001 is free
+**Backend Port Conflicts**
+- Backend now stays on the configured `PORT` instead of rewriting frontend config files
+- Default local port is `5001`
+- If `5001` is busy, stop the conflicting process or update `backend/.env`
 
 **Firestore Rules Not Applied**
 ```bash

@@ -285,8 +285,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const resetPassword = async (email: string) => {
     setError(null);
+    setMessage(null);
     try {
       await sendPasswordResetEmail(auth, email);
+      setMessage(`Password reset email sent to ${email}. Check your inbox and spam folder.`);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Password reset failed';
       setError(message);

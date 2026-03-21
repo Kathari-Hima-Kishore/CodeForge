@@ -37,6 +37,27 @@ function killProcessTree(child) {
 // Docker Hub Helper Functions (used by multiple endpoints)
 // =============================================================================
 
+// Helper function to find a user's socket ID by their user ID (O(1) lookup)
+function getUserSocketId(userId) {
+  return userIdToSocketId.get(userId) || null;
+}
+
+// Helper function to parse Docker Hub login errors
+function parseDockerHubLoginError(output, rawOutput = '') {
+  const lowerOutput = output.toLowerCase();
+
+  if (lowerOutput.includes('unauthorized') || lowerOutput.includes('invalid username or password') ||
+      lowerOutput.includes('incorrect username or password') || lowerOutput.includes('authentication failed')) {
+    return 'Docker Hub login failed: Incorrect username or password. Please check your credentials.';
+  } else if (lowerOutput.includes('access token')) {
+    return 'Docker Hub login failed: Invalid access token. Make sure you\'re using a Personal Access Token (PAT).';
+  } else if (lowerOutput.includes('network') || lowerOutput.includes('timeout')) {
+    return 'Docker Hub login failed: Network error. Please check your internet connection.';
+  } else {
+    return `Docker Hub login failed: ${(rawOutput || output).trim() || 'Unknown error'}`;
+  }
+}
+
 async function checkDockerHubRepository(username, password, repoName) {
   const https = require('https');
 
@@ -254,27 +275,38 @@ function generateColor() {
   return colors[crypto.randomInt(colors.length)];
 }
 
-async function findFreePort(startPort = 5001, maxTries = 5) {
-  // Try a few ports near the default to maintain predictability
-  const net = require('net');
-  const isPortAvailable = (port) => {
-    return new Promise((resolve) => {
-      const server = net.createServer();
-      server.listen(port, '0.0.0.0', () => {
-        server.close(() => resolve(true));
-      });
-      server.on('error', () => resolve(false));
-    });
-  };
+function listenOnConfiguredPort(port, host) {
+  return new Promise((resolve, reject) => {
+    const handleError = (error) => {
+      server.off('listening', handleListening);
+      reject(error);
+    };
 
-  for (let port = startPort; port < startPort + maxTries; port++) {
-    if (await isPortAvailable(port)) {
-      return port;
-    }
-    console.log(`Port ${port} in use, trying next...`);
+    const handleListening = () => {
+      server.off('error', handleError);
+      resolve();
+    };
+
+    server.once('error', handleError);
+    server.once('listening', handleListening);
+    server.listen(port, host);
+  });
+}
+
+function formatServerStartupError(error, port) {
+  if (!error || typeof error !== 'object') {
+    return `Unknown server startup error on port ${port}`;
   }
 
-  throw new Error(`Could not find a free port between ${startPort} and ${startPort + maxTries - 1}`);
+  if (error.code === 'EADDRINUSE') {
+    return `Port ${port} is already in use. Stop the other process or change PORT in backend/.env before restarting.`;
+  }
+
+  if (error.code === 'EACCES') {
+    return `Port ${port} requires elevated privileges. Use a higher port or update backend/.env.`;
+  }
+
+  return error.message || `Unknown server startup error on port ${port}`;
 }
 
 // =============================================================================
@@ -512,6 +544,7 @@ async function notifyFrontend(event, data) {
 
 const sessions = {}; // Active session connections (ephemeral)
 const connectedUsers = {}; // Socket ID → User mapping
+const userIdToSocketId = new Map(); // User ID → Socket ID reverse index (for performance)
 
 class SessionData {
   constructor(sessionId, hostUid, hostName, settings) {
@@ -570,6 +603,101 @@ class SessionData {
   }
 }
 
+function isPlainObject(value) {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function hasNestedSessionData(value) {
+  return isPlainObject(value) && (
+    Object.prototype.hasOwnProperty.call(value, 'hostId') ||
+    Object.prototype.hasOwnProperty.call(value, 'hostName') ||
+    Object.prototype.hasOwnProperty.call(value, 'participants') ||
+    Object.prototype.hasOwnProperty.call(value, 'sessionId') ||
+    Object.prototype.hasOwnProperty.call(value, 'name')
+  );
+}
+
+function normalizePersistedSessionData(raw, fallbackSessionId = '') {
+  const root = isPlainObject(raw) ? raw : {};
+  const nested = hasNestedSessionData(root.files) ? root.files : null;
+  const source = nested || root;
+
+  return {
+    sessionId: String(root.sessionId || source.sessionId || fallbackSessionId),
+    name: String(root.name || source.name || ''),
+    hostId: String(root.hostId || source.hostId || ''),
+    hostName: String(root.hostName || source.hostName || ''),
+    participants: isPlainObject(root.participants)
+      ? root.participants
+      : (isPlainObject(source.participants) ? source.participants : {}),
+    files: Array.isArray(root.files)
+      ? root.files
+      : (Array.isArray(source.files) ? source.files : []),
+    messages: Array.isArray(root.messages)
+      ? root.messages
+      : (Array.isArray(source.messages) ? source.messages : []),
+    isActive: typeof root.isActive === 'boolean'
+      ? root.isActive
+      : (typeof source.isActive === 'boolean' ? source.isActive : true),
+    createdAt: root.createdAt || source.createdAt || Date.now(),
+  };
+}
+
+function persistedSessionNeedsRepair(raw) {
+  const root = isPlainObject(raw) ? raw : {};
+  return hasNestedSessionData(root.files);
+}
+
+const PYTHON_STANDARD_LIBS = new Set([
+  'abc', 'argparse', 'asyncio', 'base64', 'collections', 'csv', 'datetime', 'functools',
+  'glob', 'hashlib', 'html', 'http', 'io', 'itertools', 'json', 'logging', 'math',
+  'os', 'pathlib', 'queue', 'random', 're', 'shutil', 'sqlite3', 'statistics',
+  'string', 'subprocess', 'sys', 'tempfile', 'threading', 'time', 'typing', 'unittest',
+  'urllib', 'uuid', 'xml', 'zipfile',
+]);
+
+const PYTHON_IMPORT_PACKAGE_MAP = {
+  bs4: 'beautifulsoup4',
+  cv2: 'opencv-python',
+  dotenv: 'python-dotenv',
+  flask: 'flask',
+  PIL: 'pillow',
+  sklearn: 'scikit-learn',
+  yaml: 'pyyaml',
+};
+
+function detectPythonPackages(files) {
+  const dependencies = new Set();
+  const pythonFiles = Object.entries(files).filter(([filePath]) => filePath.toLowerCase().endsWith('.py'));
+
+  for (const [, content] of pythonFiles) {
+    const importMatches = content.matchAll(/^\s*import\s+([A-Za-z0-9_.,\s]+)/gm);
+    for (const match of importMatches) {
+      const modules = match[1]
+        .split(',')
+        .map(part => part.trim().split(/\s+as\s+/i)[0].trim())
+        .filter(Boolean);
+
+      for (const moduleName of modules) {
+        const baseModule = moduleName.split('.')[0];
+        if (!PYTHON_STANDARD_LIBS.has(baseModule)) {
+          dependencies.add(PYTHON_IMPORT_PACKAGE_MAP[baseModule] || baseModule);
+        }
+      }
+    }
+
+    const fromMatches = content.matchAll(/^\s*from\s+([A-Za-z0-9_\.]+)\s+import\s+/gm);
+    for (const match of fromMatches) {
+      const baseModule = match[1].split('.')[0];
+      if (!PYTHON_STANDARD_LIBS.has(baseModule)) {
+        dependencies.add(PYTHON_IMPORT_PACKAGE_MAP[baseModule] || baseModule);
+      }
+    }
+  }
+
+  return Array.from(dependencies).sort();
+}
+
 // =============================================================================
 // Firestore Persistence
 // =============================================================================
@@ -585,13 +713,18 @@ async function saveSessionToFirestore(session) {
     const sessionRef = getDb().collection("sessions").doc(session.id);
     const sessionDoc = await sessionRef.get();
 
-    const docExists = typeof sessionDoc?.exists === 'function' ? sessionDoc.exists() : false;
+    const docExists = Boolean(sessionDoc?.exists);
     
     if (docExists) {
-      await sessionRef.update({
+      await sessionRef.set({
+        sessionId: session.id,
+        name: session.name,
+        hostId: session.host_uid,
+        hostName: session.participants[session.host_uid]?.name || "Host",
         participants: session.participants,
-        isActive: session.is_active
-      });
+        isActive: session.is_active,
+        createdAt: session.created_at_ms || new Date(session.created_at).getTime()
+      }, { merge: true });
       console.log(`💾 Session ${session.id} participants synced to Firestore`);
     } else {
       const sessionData = {
@@ -600,13 +733,12 @@ async function saveSessionToFirestore(session) {
         hostId: session.host_uid,
         hostName: session.participants[session.host_uid]?.name || "Host",
         participants: session.participants,
-        files: [],
-        messages: [],
         isActive: session.is_active,
         createdAt: session.created_at_ms || new Date(session.created_at).getTime()
       };
 
-      await sessionRef.set(sessionData);
+      // Files/messages are written directly by the frontend and must never be reset here.
+      await sessionRef.set(sessionData, { merge: true });
       console.log(`💾 Session ${session.id} created in Firestore`);
     }
   } catch (error) {
@@ -625,12 +757,9 @@ io.on('connection', (socket) => {
 
   const user_id = auth.userId || `anon_${sid.slice(0, 8)}`;
   const user_name = auth.userName || "Anonymous";
-  const user_email = auth.userEmail || "";
-
   connectedUsers[sid] = {
     uid: user_id,
     name: user_name,
-    email: user_email,
     session_id: null
   };
 
@@ -709,7 +838,30 @@ io.on('connection', (socket) => {
         try {
           const doc = await getDb().collection("sessions").doc(sessionId).get();
           if (doc.exists) {
-            const dataFs = doc.data();
+            const rawDataFs = doc.data();
+            const dataFs = normalizePersistedSessionData(rawDataFs, sessionId);
+
+            if (persistedSessionNeedsRepair(rawDataFs)) {
+              await doc.ref.set({
+                sessionId: dataFs.sessionId,
+                name: dataFs.name,
+                hostId: dataFs.hostId,
+                hostName: dataFs.hostName,
+                participants: dataFs.participants,
+                files: dataFs.files,
+                messages: dataFs.messages,
+                isActive: dataFs.isActive,
+                createdAt: dataFs.createdAt,
+              }, { merge: true });
+              console.log(`🔧 Session ${sessionId} repaired from malformed Firestore shape`);
+            }
+
+            if (!dataFs.isActive && userData.uid === dataFs.hostId) {
+              dataFs.isActive = true;
+              await doc.ref.set({ isActive: true }, { merge: true });
+              console.log(`🔄 Host ${userData.uid} reactivated session ${sessionId}`);
+            }
+
             if (dataFs.isActive) {
               const session = new SessionData(
                 sessionId,
@@ -1328,6 +1480,12 @@ app.get('/api/dockerhub/repos', async (req, res) => {
 
     if (authRes.statusCode !== 200) {
       let errorMsg = 'Authentication failed. Docker Hub now requires a Personal Access Token (PAT) instead of password. Create one at: https://hub.docker.com/settings/security';
+      /*
+    console.log(`ðŸš€ CodeForge Backend (Node.js) starting on port ${CONFIG.port}...`);
+        const errData = JSON.parse(authRes.data || '{}');
+        errorMsg = errData.detail || errData.message || errorMsg;
+      } catch {}
+      */
       try {
         const errData = JSON.parse(authRes.data || '{}');
         errorMsg = errData.detail || errData.message || errorMsg;
@@ -1540,11 +1698,30 @@ app.get('/api/check-language-support', (req, res) => {
 });
 
 app.post('/api/build-container', async (req, res) => {
-  const { files, sessionName, action, dockerHubUsername, dockerHubPassword, dockerHubRepo, cloudProvider, cloudConfig } = req.body;
+  const { files, sessionName, action, dockerHubUsername, dockerHubPassword, dockerHubRepo, cloudProvider, cloudConfig, userId } = req.body;
 
   if (!files || typeof files !== 'object') {
     return res.status(400).json({ error: 'Invalid files data' });
   }
+
+  // Setup for real-time updates
+  const userSocketId = userId ? getUserSocketId(userId) : null;
+  const emitBuildUpdate = (output, isError = false) => {
+    if (userSocketId) {
+      io.to(userSocketId).emit('execution_output', { output, isError });
+    }
+  };
+  let lastBuildPercent = 0;
+  const emitBuildProgress = (percent, message, active = true) => {
+    if (!userSocketId) return;
+    lastBuildPercent = Math.max(lastBuildPercent, Math.max(0, Math.min(100, percent)));
+    io.to(userSocketId).emit('deployment_progress', {
+      action,
+      percent: lastBuildPercent,
+      message,
+      active,
+    });
+  };
 
   const dockerCmd = process.platform === 'win32' ? 'docker.exe' : 'docker';
   const sanitizedName = (sessionName || 'project').toLowerCase().replace(/[^a-z0-9]/g, '-');
@@ -1583,6 +1760,7 @@ app.post('/api/build-container', async (req, res) => {
   console.log(`[Docker Build] Docker cmd: ${dockerCmd}`);
 
   try {
+    emitBuildProgress(3, 'Checking Docker...');
     execSync(`${dockerCmd} info`, { stdio: 'pipe' });
     console.log(`[Docker Build] Docker is accessible`);
   } catch (err) {
@@ -1591,6 +1769,7 @@ app.post('/api/build-container', async (req, res) => {
   }
 
   try {
+    emitBuildProgress(8, 'Preparing build files...');
     fs.mkdirSync(buildDir, { recursive: true });
 
     const fileEntries = Object.entries(files);
@@ -1677,6 +1856,10 @@ app.post('/api/build-container', async (req, res) => {
       if (allPythonContent.includes('import sklearn')) {
         detectedDeps.add('scikit-learn');
         console.log(`[Docker Build] Found: scikit-learn`);
+      }
+      if (allPythonContent.includes('from dotenv import') || allPythonContent.includes('import dotenv')) {
+        detectedDeps.add('python-dotenv');
+        console.log(`[Docker Build] Found: python-dotenv`);
       }
 
       if (detectedDeps.size > 0) {
@@ -1855,8 +2038,12 @@ CMD ["tail", "-f", "/dev/null"]`;
     
     fs.writeFileSync(path.join(buildDir, 'Dockerfile'), dockerfileContent);
     
+    emitBuildProgress(22, 'Generating Docker build plan...');
     if (action === 'dockerhub' && dockerHubUsername && dockerHubPassword) {
       console.log(`[Docker] Logging into Docker Hub before build...`);
+      emitBuildUpdate('🔑 Logging into Docker Hub...\n');
+
+      emitBuildProgress(28, 'Authenticating with Docker Hub...');
       const loginResult = await new Promise((resolve) => {
         const loginProc = spawn(dockerCmd, ['login', '--username', dockerHubUsername, '--password-stdin'], { 
           shell: true,
@@ -1872,21 +2059,31 @@ CMD ["tail", "-f", "/dev/null"]`;
 
         loginProc.on('close', (code) => {
           console.log(`[Docker] Login output: ${loginOutput}`);
-          resolve(code === 0);
+          if (code === 0) {
+            resolve({ success: true });
+          } else {
+            const errorMessage = parseDockerHubLoginError(loginOutput);
+            resolve({ success: false, error: errorMessage });
+          }
         });
       });
 
-      if (!loginResult) {
+      if (!loginResult.success) {
         fs.rmSync(buildDir, { recursive: true, force: true });
-        return res.status(500).json({ error: 'Failed to login to Docker Hub. Make sure you\'re using a PAT.' });
+        emitBuildUpdate(`❌ ${loginResult.error}\n`, true);
+        return res.status(500).json({ error: loginResult.error });
       }
       console.log(`[Docker] Logged into Docker Hub successfully`);
+      emitBuildUpdate('✅ Logged into Docker Hub\n');
     }
 
     console.log(`[Docker Build] Running docker build...`);
     console.log(`[Docker Build] Image name: ${imageName}`);
+    emitBuildUpdate('🔨 Building Docker image...\n');
 
+    emitBuildProgress(38, 'Building Docker image...');
     let buildOutput = '';
+    let dockerBuildPulse = 38;
     try {
       await new Promise((resolve, reject) => {
         const buildProcess = exec(`${dockerCmd} build -t ${imageName} "${buildDir}" --progress=plain`, {
@@ -1898,11 +2095,15 @@ CMD ["tail", "-f", "/dev/null"]`;
         buildProcess.stdout.on('data', (data) => {
           buildOutput += data;
           console.log(`[Docker Build] ${data.trim()}`);
+          dockerBuildPulse = Math.min(62, dockerBuildPulse + 1);
+          emitBuildProgress(dockerBuildPulse, 'Building Docker image...');
         });
         
         buildProcess.stderr.on('data', (data) => {
           buildOutput += data;
           console.log(`[Docker Build] ERR: ${data.trim()}`);
+          dockerBuildPulse = Math.min(62, dockerBuildPulse + 1);
+          emitBuildProgress(dockerBuildPulse, 'Building Docker image...');
         });
         
         buildProcess.on('error', (error) => {
@@ -1913,10 +2114,13 @@ CMD ["tail", "-f", "/dev/null"]`;
         buildProcess.on('close', (code) => {
           if (code !== 0) {
             console.log(`[Docker Build] Build exited with code ${code}`);
+            emitBuildUpdate(`❌ Docker build failed (exit code ${code})\n`, true);
             reject(new Error(`Docker build failed with exit code ${code}`));
           } else {
             console.log(`[Docker Build] Build succeeded`);
             console.log(`[Docker Build] Verifying image ${imageName} exists...`);
+            emitBuildUpdate('✅ Docker image built successfully\n');
+            emitBuildProgress(action === 'dockerhub' ? 68 : 100, action === 'dockerhub' ? 'Docker image built' : 'Build complete', action === 'dockerhub');
             // Image ID is retrieved after build completes (see below)
             resolve();
           }
@@ -1934,9 +2138,7 @@ CMD ["tail", "-f", "/dev/null"]`;
     }
 
     // Get image ID after build
-    // Add delay to ensure different timestamps in Docker Desktop
-    await new Promise(r => setTimeout(r, 1500));
-    
+    // Removed unnecessary delay - Docker timestamps are already unique
     let imageId = null;
     try {
       imageId = execSync(`${dockerCmd} images -q ${imageName}`, { encoding: 'utf8' }).trim();
@@ -1947,6 +2149,7 @@ CMD ["tail", "-f", "/dev/null"]`;
 
     // Auto-import is satisfied by 'docker build' itself (local engine)
     if (action === 'autoimport') {
+      emitBuildProgress(100, 'Image imported to Docker Desktop', false);
       fs.rmSync(buildDir, { recursive: true, force: true });
       return res.json({ 
         success: true, 
@@ -1969,44 +2172,76 @@ CMD ["tail", "-f", "/dev/null"]`;
 
       // Check/create repository before pushing
       console.log(`[Docker Hub] Checking repository ${dockerHubUsername}/${hubRepoName}...`);
+      emitBuildUpdate(`🔍 Checking Docker Hub repository ${dockerHubUsername}/${hubRepoName}...\n`);
+      emitBuildProgress(74, 'Checking Docker Hub repository...');
       const repoCheck = await checkDockerHubRepository(dockerHubUsername, dockerHubPassword, hubRepoName);
-      
+
       if (repoCheck.exists === null) {
         console.log(`[Docker Hub] Repo check failed: ${repoCheck.message}, proceeding anyway...`);
+        emitBuildUpdate(`⚠️ Repository check failed, proceeding anyway...\n`);
       } else if (repoCheck.exists === false) {
         console.log(`[Docker Hub] Repository does not exist, attempting to create...`);
+        emitBuildUpdate(`📦 Creating Docker Hub repository...\n`);
         const repoCreate = await createDockerHubRepository(dockerHubUsername, dockerHubPassword, hubRepoName, repoCheck.token);
         if (!repoCreate.created) {
           console.log(`[Docker Hub] Create failed: ${repoCreate.message}`);
+          emitBuildUpdate(`⚠️ Repository creation failed, continuing with push...\n`);
           // Continue anyway - push might still work if it's a valid namespace
         } else {
           console.log(`[Docker Hub] Repository created successfully`);
+          emitBuildUpdate(`✅ Repository created successfully\n`);
         }
       } else {
         console.log(`[Docker Hub] Repository exists`);
+        emitBuildUpdate(`✅ Repository exists\n`);
       }
 
+      emitBuildUpdate(`🏷️ Tagging image for Docker Hub: ${hubImageName}...\n`);
+      emitBuildProgress(80, 'Tagging image...');
       exec(`${dockerCmd} tag ${imageName} ${hubImageName}`, (err) => {
         if (err) {
           console.log(`[Docker Tag] Failed: ${err.message}`);
+          emitBuildUpdate(`❌ Failed to tag image: ${err.message}\n`, true);
           exec(`${dockerCmd} rmi ${imageName}`, () => { });
           fs.rmSync(buildDir, { recursive: true, force: true });
           return res.status(500).json({ error: 'Failed to tag image for Docker Hub', details: err.message });
         }
+        emitBuildUpdate(`✅ Image tagged successfully\n`);
+        emitBuildUpdate(`🔑 Logging into Docker Hub for push...\n`);
 
+        emitBuildProgress(84, 'Authenticating for push...');
         const loginProc = spawn(dockerCmd, ['login', '-u', dockerHubUsername, '-p', dockerHubPassword], { shell: true });
+
+        let loginOutput = '';
+        loginProc.stdout.on('data', (data) => loginOutput += data.toString());
+        loginProc.stderr.on('data', (data) => loginOutput += data.toString());
 
         loginProc.on('close', (loginCode) => {
           if (loginCode !== 0) {
             exec(`${dockerCmd} rmi ${imageName} ${hubImageName}`, () => { });
             fs.rmSync(buildDir, { recursive: true, force: true });
-            return res.status(500).json({ error: 'Failed to login to Docker Hub' });
+
+            const errorMessage = parseDockerHubLoginError(loginOutput);
+            return res.status(500).json({ error: errorMessage });
           }
 
+          emitBuildUpdate(`⬆️ Pushing image to Docker Hub: ${hubImageName}...\n`);
+          emitBuildProgress(88, 'Pushing image to Docker Hub...');
           const pushProc = spawn(dockerCmd, ['push', hubImageName], { shell: true });
           let pushOutput = '';
+          let pushPulse = 88;
 
-          pushProc.stdout.on('data', (d) => pushOutput += d.toString());
+          pushProc.stdout.on('data', (d) => {
+            pushOutput += d.toString();
+            // Send real-time push progress updates
+            const output = d.toString();
+            if (output.includes('Pushing') || output.includes('Pushed') ||
+                output.includes('Layer already exists') || output.includes('digest:')) {
+                emitBuildUpdate(output);
+                pushPulse = Math.min(98, pushPulse + 1);
+                emitBuildProgress(pushPulse, 'Pushing image to Docker Hub...');
+            }
+          });
           pushProc.stderr.on('data', (d) => pushOutput += d.toString());
 
           pushProc.on('close', (pushCode) => {
@@ -2015,9 +2250,12 @@ CMD ["tail", "-f", "/dev/null"]`;
             fs.rmSync(buildDir, { recursive: true, force: true });
 
             if (pushCode !== 0) {
+              emitBuildUpdate(`❌ Failed to push to Docker Hub\n`, true);
               return res.status(500).json({ error: 'Failed to push to Docker Hub', details: pushOutput });
             }
 
+            emitBuildUpdate(`✅ Successfully pushed to Docker Hub: ${hubImageName}\n`);
+            emitBuildProgress(100, 'Pushed to Docker Hub', false);
             res.json({ success: true, message: `Image pushed to Docker Hub: ${hubImageName}`, imageName: hubImageName, imageId: imageId });
           });
         });
@@ -2203,7 +2441,7 @@ app.post('/api/validate-render-service', async (req, res) => {
 });
 
 app.post('/api/deploy/render', async (req, res) => {
-  const { renderApiKey, renderServiceName, renderRegion, renderBuildCmd, renderStartCmd, renderEnvVars, files, socketId, dockerHubUsername, dockerHubPassword, dockerHubRepo } = req.body;
+  const { renderApiKey, renderServiceName, renderRegion, renderBuildCmd, renderStartCmd, renderEnvVars, files, socketId, userId, dockerHubUsername, dockerHubPassword, dockerHubRepo } = req.body;
 
   if (!renderApiKey) {
     return res.status(400).json({ error: 'Render API key is required' });
@@ -2268,10 +2506,23 @@ app.post('/api/deploy/render', async (req, res) => {
     });
   };
 
+  const liveSocketId = socketId || (userId ? getUserSocketId(userId) : null);
+  let lastRenderPercent = 0;
+  const emitProgress = (percent, message, active = true) => {
+    if (!liveSocketId) return;
+    lastRenderPercent = Math.max(lastRenderPercent, Math.max(0, Math.min(100, percent)));
+    io.to(liveSocketId).emit('deployment_progress', {
+      action: 'render',
+      percent: lastRenderPercent,
+      message,
+      active,
+    });
+  };
+
   // Helper: emit output to socket (defined at function scope so catch block can use it)
   const emitOutput = (output, isError = false) => {
-    if (socketId) {
-      io.to(socketId).emit('execution_output', { output, isError });
+    if (liveSocketId) {
+      io.to(liveSocketId).emit('execution_output', { output, isError });
     }
   };
 
@@ -2279,11 +2530,12 @@ app.post('/api/deploy/render', async (req, res) => {
   console.log('[Render Deploy] Service:', renderServiceName);
   console.log('[Render Deploy] DockerHub:', dockerHubUsername, '/', sanitizedRepo);
   console.log('[Render Deploy] Files received:', Object.keys(files || {}).length);
-  if (socketId) {
-    io.to(socketId).emit('execution_output', { output: `📦 Docker Hub repo: ${dockerHubUsername}/${sanitizedRepo}\n` });
+  if (liveSocketId) {
+    io.to(liveSocketId).emit('execution_output', { output: `📦 Docker Hub repo: ${dockerHubUsername}/${sanitizedRepo}\n` });
   }
 
   try {
+    emitProgress(4, 'Preparing Render deployment...');
     const { exec: execSync2 } = require('child_process');
     const { promisify } = require('util');
     const exec = promisify(execSync2);
@@ -2342,6 +2594,7 @@ app.post('/api/deploy/render', async (req, res) => {
 
     // Check if service name is already taken by listing existing services
     emitOutput(`🔎 Checking if "${sanitizedName}" is available...\n`);
+    emitProgress(10, 'Checking service name...');
     try {
       const listResponse = await renderApiRequest('GET', '/v1/services?limit=100');
       if (listResponse.status === 200) {
@@ -2374,6 +2627,7 @@ app.post('/api/deploy/render', async (req, res) => {
 
     console.log('[Render Deploy] Step 3: Writing files to temp dir:', tmpDir);
     emitOutput(`📝 Writing project files to ${tmpDir}...\n`);
+    emitProgress(16, 'Writing project files...');
     const fileNames = Object.keys(files);
     for (const [pFile, content] of Object.entries(files)) {
       const fullPath = path.join(tmpDir, pFile);
@@ -2415,6 +2669,7 @@ app.post('/api/deploy/render', async (req, res) => {
     };
 
     emitOutput(`🚀 Deploying to Render.com via Docker Hub...\n`);
+    emitProgress(24, 'Preparing Docker image...');
 
     // Step 1: Write project files (done above at Step 3)
 
@@ -2462,6 +2717,7 @@ README.md
     // Step 4: Build Docker image
     console.log('[Render Deploy] Step 4: Building Docker image...');
     emitOutput('🐳 Building Docker image (this may take a minute)...\n');
+    emitProgress(32, 'Building Docker image...');
     const imageName = `codeforge-${Date.now()}`;
     console.log('[Render Deploy] Image name:', imageName);
     const dockerfileContent = files['Dockerfile'] || files['Dockerfile.dockerfile'] || null;
@@ -2558,6 +2814,7 @@ fi
 
           // Add Flask to requirements if not present
           let reqContent = files['requirements.txt'] || '';
+          const detectedPythonPackages = detectPythonPackages(files);
           if (!reqContent.toLowerCase().includes('flask')) {
             reqContent += '\nFlask>=2.3.0\n';
           }
@@ -2565,6 +2822,11 @@ fi
           if (!reqContent.toLowerCase().includes('gunicorn')) {
             reqContent += 'gunicorn>=20.0.0\n';
           }
+          detectedPythonPackages.forEach((pkg) => {
+            if (pkg !== 'flask' && pkg !== 'gunicorn' && !reqContent.toLowerCase().includes(pkg.toLowerCase())) {
+              reqContent += `${pkg}\n`;
+            }
+          });
           fs.writeFileSync(path.join(tmpDir, 'requirements.txt'), reqContent);
 
           // Extract app module from entry file (e.g., app.py -> app)
@@ -2652,10 +2914,12 @@ fi
     }
     console.log('[Render Deploy] Docker image built successfully');
     emitOutput('✅ Docker image built\n');
+    emitProgress(48, 'Docker image built');
 
     // Step 5: Tag for Docker Hub
     console.log('[Render Deploy] Step 6: Tagging image for Docker Hub:', hubImageName);
     emitOutput('🏷️ Tagging for Docker Hub...\n');
+    emitProgress(54, 'Tagging image...');
     const tagResult = await runCmd(`${dockerCmd} tag ${imageName} ${hubImageName}`);
     if (tagResult.err) {
       const tagErr = (tagResult.stderr || tagResult.stdout || tagResult.err.message || '').substring(0, 500);
@@ -2669,6 +2933,7 @@ fi
     // Step 4: Check/create Docker Hub repository
     console.log('[Render Deploy] Step 7: Checking Docker Hub repository:', sanitizedRepo);
     emitOutput('📦 Checking Docker Hub repository...\n');
+    emitProgress(60, 'Checking Docker Hub repository...');
     const repoCheck = await checkDockerHubRepository(dockerHubUsername, dockerHubPassword, sanitizedRepo);
     
     if (repoCheck.exists === null) {
@@ -2692,14 +2957,17 @@ fi
     // Step 5: Push to Docker Hub
     console.log('[Render Deploy] Step 8: Logging into Docker Hub and pushing...');
     emitOutput('⬆️ Pushing to Docker Hub...\n');
+    emitProgress(68, 'Pushing image to Docker Hub...');
     const loginResult = await runCmd(`${dockerCmd} login -u ${dockerHubUsername} -p ${dockerHubPassword}`);
     if (loginResult.err) {
       const loginErr = (loginResult.stderr || loginResult.stdout || '').substring(0, 300);
       console.log('[Render Deploy] FATAL: Docker Hub login failed:', loginErr);
       exec(`${dockerCmd} rmi ${imageName} ${hubImageName}`, () => { });
       fs.rmSync(tmpDir, { recursive: true, force: true });
-      emitOutput(`❌ Docker Hub login failed: ${loginErr}\n`, true);
-      return res.status(500).json({ error: 'Docker Hub login failed', details: loginErr });
+
+      const errorMessage = parseDockerHubLoginError(loginErr);
+      emitOutput(`❌ ${errorMessage}\n`, true);
+      return res.status(500).json({ error: errorMessage });
     }
     emitOutput('✅ Logged in to Docker Hub\n');
 
@@ -2716,10 +2984,12 @@ fi
     }
     console.log('[Render Deploy] Pushed to Docker Hub:', hubImageName);
     emitOutput(`✅ Pushed to Docker Hub: ${hubImageName}\n`);
+    emitProgress(76, 'Image pushed to Docker Hub');
 
     // Step 9: Deploy to Render using Docker image
     console.log('[Render Deploy] Step 9: Deploying to Render...');
     emitOutput('🚀 Deploying to Render.com...\n');
+    emitProgress(82, 'Connecting to Render...');
 
     // Get owner ID
     console.log('[Render Deploy] Fetching Render owner ID...');
@@ -2744,6 +3014,7 @@ fi
     // Check for existing service
     console.log('[Render Deploy] Step 10: Listing existing services...');
     emitOutput('📋 Checking for existing services...\n');
+    emitProgress(86, 'Checking existing services...');
     const listResponse = await renderApiRequest('GET', '/v1/services?limit=100');
     console.log('[Render Deploy] List services status:', listResponse.status);
     if (listResponse.status !== 200) {
@@ -2769,39 +3040,77 @@ fi
     let startCommand = renderStartCmd || '';
 
     if (!startCommand) {
-      // Detect framework from files
       const fileKeys = Object.keys(files);
-      const hasPackageJson = fileKeys.includes('package.json');
-      const pythonFiles = fileKeys.filter(f => f.endsWith('.py'));
-      const hasPython = pythonFiles.length > 0;
-      const hasRequirements = fileKeys.includes('requirements.txt');
-      const fileContent = Object.values(files).join(' ').toLowerCase();
+      const lowerFileKeys = fileKeys.map(f => f.toLowerCase());
+      const packageJsonPath = fileKeys.find(f => f.toLowerCase() === 'package.json');
+      const pomXmlPath = fileKeys.find(f => f.toLowerCase().endsWith('pom.xml'));
+      const gradlePath = fileKeys.find(f => f.toLowerCase().endsWith('build.gradle') || f.toLowerCase().endsWith('build.gradle.kts'));
+      const pythonFiles = fileKeys.filter(f => f.toLowerCase().endsWith('.py'));
+      const javaFiles = fileKeys.filter(f => f.toLowerCase().endsWith('.java'));
+      const hasRequirements = lowerFileKeys.includes('requirements.txt');
+      const fileContent = Object.values(files).join('\n').toLowerCase();
+      const detectedPythonPackages = detectPythonPackages(files);
+      const detectedPythonInstallCommand = detectedPythonPackages.length > 0
+        ? `pip install ${detectedPythonPackages.join(' ')} gunicorn`
+        : '';
 
       console.log('[Render Deploy] Auto-detecting framework for start command...');
 
-      if (hasPackageJson) {
-        // Node.js
+      if (packageJsonPath) {
+        let packageJson = null;
+        try {
+          packageJson = JSON.parse(files[packageJsonPath]);
+        } catch (error) {
+          console.warn('[Render Deploy] Failed to parse package.json during auto-detect');
+        }
+
+        const scripts = packageJson && typeof packageJson.scripts === 'object' && packageJson.scripts
+          ? packageJson.scripts
+          : {};
+        const hasBuildScript = typeof scripts.build === 'string' && scripts.build.trim().length > 0;
+        const hasStartScript = typeof scripts.start === 'string' && scripts.start.trim().length > 0;
+        const serverEntry = fileKeys.find(f => {
+          const lower = f.toLowerCase();
+          return lower === 'server.js' || lower === 'index.js' || lower.endsWith('/server.js');
+        });
+
         console.log('[Render Deploy] Detected: Node.js');
-        startCommand = 'npm start';
-        if (!buildCommand) buildCommand = 'npm install';
+        startCommand = hasStartScript ? 'npm start' : (serverEntry ? `node ${serverEntry}` : 'node index.js');
+        if (!buildCommand) buildCommand = hasBuildScript ? 'npm install && npm run build' : 'npm install';
+      } else if (pomXmlPath) {
+        console.log('[Render Deploy] Detected: Java (Maven)');
+        startCommand = 'java -jar target/*.jar';
+        if (!buildCommand) buildCommand = lowerFileKeys.includes('mvnw') ? './mvnw package -DskipTests' : 'mvn package -DskipTests';
+      } else if (gradlePath) {
+        console.log('[Render Deploy] Detected: Java (Gradle)');
+        startCommand = 'java -jar build/libs/*.jar';
+        if (!buildCommand) buildCommand = lowerFileKeys.includes('gradlew') ? './gradlew build -x test' : 'gradle build -x test';
+      } else if (javaFiles.length > 0) {
+        console.log('[Render Deploy] Detected: Java');
+        const mainJava = fileKeys.find(f => {
+          const lower = f.toLowerCase();
+          return lower.endsWith('/main.java') || lower === 'main.java' || lower.endsWith('/app.java') || lower === 'app.java';
+        }) || javaFiles[0];
+        const mainClass = path.basename(mainJava, '.java');
+        startCommand = `java ${mainClass}`;
+        if (!buildCommand) buildCommand = `javac ${mainJava}`;
       } else if (fileContent.includes('flask') || fileContent.includes('from flask import')) {
-        // Flask
         console.log('[Render Deploy] Detected: Flask');
-        startCommand = 'gunicorn app:app';
-        if (!buildCommand && hasRequirements) buildCommand = 'pip install -r requirements.txt';
+        const appPy = fileKeys.find(f => /(^|\/)(app|main)\.py$/i.test(f)) || pythonFiles[0] || 'app.py';
+        const moduleEntry = appPy.replace(/\.py$/i, '').replace(/\//g, '.');
+        startCommand = `gunicorn ${moduleEntry}:app`;
+        if (!buildCommand) buildCommand = hasRequirements ? 'pip install -r requirements.txt' : (detectedPythonInstallCommand || 'pip install flask gunicorn');
       } else if (fileContent.includes('fastapi') || fileContent.includes('uvicorn')) {
-        // FastAPI
         console.log('[Render Deploy] Detected: FastAPI');
-        const mainPy = pythonFiles.find(f => f.includes('main')) || pythonFiles[0] || 'main.py';
-        const moduleEntry = mainPy.replace('.py', '') + ':app';
+        const mainPy = fileKeys.find(f => /(^|\/)(main|app)\.py$/i.test(f)) || pythonFiles[0] || 'main.py';
+        const moduleEntry = mainPy.replace(/\.py$/i, '').replace(/\//g, '.') + ':app';
         startCommand = `uvicorn ${moduleEntry} --host 0.0.0.0 --port 10000`;
-        if (!buildCommand && hasRequirements) buildCommand = 'pip install -r requirements.txt';
-      } else if (hasPython) {
-        // Generic Python
+        if (!buildCommand) buildCommand = hasRequirements ? 'pip install -r requirements.txt' : (detectedPythonInstallCommand || 'pip install fastapi uvicorn');
+      } else if (pythonFiles.length > 0) {
         console.log('[Render Deploy] Detected: Python');
-        const mainPy = pythonFiles.find(f => f.includes('main') || f.includes('app')) || pythonFiles[0] || 'app.py';
+        const mainPy = fileKeys.find(f => /(^|\/)(main|app)\.py$/i.test(f)) || pythonFiles[0] || 'app.py';
         startCommand = `python ${mainPy}`;
-        if (!buildCommand && hasRequirements) buildCommand = 'pip install -r requirements.txt';
+        if (!buildCommand) buildCommand = hasRequirements ? 'pip install -r requirements.txt' : detectedPythonInstallCommand;
       }
 
       console.log('[Render Deploy] Auto-detected start command:', startCommand);
@@ -2821,6 +3130,7 @@ fi
       console.log('[Render Deploy] Updating existing service:', serviceId, 'with image:', hubImageName);
       emitOutput(`📝 Found existing service: ${sanitizedName}\n`);
       emitOutput('🔄 Updating service...\n');
+      emitProgress(90, 'Updating Render service...');
 
       const updateBody = {
         image: {
@@ -2841,10 +3151,12 @@ fi
         return res.status(400).json({ error: errorMsg });
       }
       emitOutput('✅ Service updated\n');
+      emitProgress(93, 'Render service updated');
     } else {
       // Create new Docker-backed service
       console.log('[Render Deploy] Step 11: Creating new service:', sanitizedName, 'image:', hubImageName);
       emitOutput('🆕 Creating new Docker web service...\n');
+      emitProgress(90, 'Creating Render service...');
 
       const createBody = {
         type: 'web_service',
@@ -2877,29 +3189,43 @@ fi
       serviceUrl = created?.serviceDetails?.url || created?.url || `https://${sanitizedName}.onrender.com`;
       console.log('[Render Deploy] Service created:', serviceId, 'URL:', serviceUrl);
       emitOutput('✅ Service created\n');
+      emitProgress(93, 'Render service created');
     }
 
-    // Step 12: Trigger deploy
-    console.log('[Render Deploy] Step 12: Triggering deploy for service:', serviceId);
-    emitOutput('🚀 Triggering deployment...\n');
-    const deployResponse = await renderApiRequest('POST', `/v1/services/${serviceId}/deploys`, {
-      clearCache: false
+    // Step 12: Hand off to Render and stop progress tracking here
+    const dashboardUrl = `https://dashboard.render.com/web/${serviceId}`;
+    const handoffUrl = serviceUrl || `https://${sanitizedName}.onrender.com`;
+    emitOutput('🚀 Docker service is auto-deploying...\n');
+    emitOutput('Render deployment submitted\n');
+    emitOutput(`Track deployment in Render: ${dashboardUrl}\n`);
+    emitProgress(100, 'Handed off to Render', false);
+    return res.json({
+      success: true,
+      message: 'Deployment handed off to Render',
+      url: handoffUrl,
+      serviceId,
+      dashboardUrl,
+      handedOff: true
     });
-    console.log('[Render Deploy] Deploy trigger status:', deployResponse.status);
+
+    // Skip manual deploy trigger for Docker images - they deploy automatically
+    // Docker image services auto-deploy when created, manual trigger causes 400 error
+    const deployResponse = { status: 200, data: { id: 'auto-deploy' } }; // Mock successful response
 
     if (deployResponse.status !== 200 && deployResponse.status !== 201) {
       emitOutput('⚠️ Warning: Failed to trigger deploy\n', true);
     } else {
       const deployId = deployResponse.data?.id;
-      emitOutput('📦 Deployment started, waiting for service to go live...\n');
+    emitOutput('📦 Deployment started, waiting for service to go live...\n');
+    emitProgress(95, 'Waiting for Render deployment...');
 
-      // Poll for status
-      const maxPolls = 200;
+      // Poll for status - optimized for faster deployment feedback
+      const maxPolls = 60; // Reduced from 200 (60 * 2s = 2 minutes max)
       let pollCount = 0;
       const startTime = Date.now();
 
       while (pollCount < maxPolls) {
-        await new Promise(r => setTimeout(r, 3000));
+        await new Promise(r => setTimeout(r, 2000)); // Reduced from 3000ms
         pollCount++;
         const elapsed = Math.floor((Date.now() - startTime) / 1000);
         const minutes = Math.floor(elapsed / 60);
@@ -2912,12 +3238,21 @@ fi
             const deployStatusResponse = await renderApiRequest('GET', `/v1/services/${serviceId}/deploys/${deployId}`);
             if (deployStatusResponse.status === 200) {
               const deployStatus = deployStatusResponse.data?.status;
+              const statusProgressMap = {
+                created: 96,
+                build_in_progress: 97,
+                update_in_progress: 97,
+                deploying: 98,
+                live: 100,
+              };
+              emitProgress(statusProgressMap[String(deployStatus).toLowerCase()] || 96, `Render status: ${deployStatus}`, deployStatus !== 'live');
               emitOutput(`⏳ Status: ${deployStatus} (${timeStr} elapsed)\n`);
 
               if (deployStatus === 'live') {
                 const url = statusResponse.data?.serviceDetails?.url || serviceUrl;
                 emitOutput(`\n🎉 Deployment successful!\n`);
                 emitOutput(`🌐 Live at: ${url}\n`);
+                emitProgress(100, 'Deployment live', false);
                 return res.json({ success: true, message: `Deployed to Render: ${sanitizedName}`, url, serviceId });
               }
 
@@ -3043,36 +3378,34 @@ app.post('/api/check-email', async (req, res) => {
 // Main
 // =============================================================================
 
+/*
 async function main() {
   try {
-    const port = await findFreePort(CONFIG.port);
-    CONFIG.port = port;
-
-    const rootDir = path.resolve(__dirname, '..');
-    fs.writeFileSync(path.join(rootDir, '.backend_port'), port.toString());
-
-    const frontendEnv = path.join(rootDir, 'frontend', '.env');
-    if (fs.existsSync(frontendEnv)) {
-      try {
-        let content = fs.readFileSync(frontendEnv, 'utf8');
-        const newLine = `NEXT_PUBLIC_BACKEND_URL=http://localhost:${port}`;
-        if (content.includes('NEXT_PUBLIC_BACKEND_URL=')) {
-          content = content.replace(/NEXT_PUBLIC_BACKEND_URL=.*/, newLine);
-        } else {
-          content += `\n${newLine}\n`;
-        }
-        fs.writeFileSync(frontendEnv, content);
+    await listenOnConfiguredPort(CONFIG.port, CONFIG.host);
+    console.log(`CodeForge Backend (Node.js) listening on port ${CONFIG.port}`);
         console.log(`📝 Updated ${frontendEnv} with port ${port}`);
       } catch (e) {
         console.warn(`⚠️  Could not update frontend/.env: ${e.message}`);
       }
     }
 
-    server.listen(port, CONFIG.host, () => {
       console.log(`🚀 CodeForge Backend (Node.js) starting on port ${port}...`);
     });
   } catch (e) {
     console.error(`❌ Failed to start backend: ${e.message}`);
+    process.exit(1);
+  }
+}
+
+main();
+*/
+
+async function main() {
+  try {
+    await listenOnConfiguredPort(CONFIG.port, CONFIG.host);
+    console.log(`CodeForge Backend (Node.js) listening on port ${CONFIG.port}`);
+  } catch (e) {
+    console.error(`Failed to start backend: ${formatServerStartupError(e, CONFIG.port)}`);
     process.exit(1);
   }
 }

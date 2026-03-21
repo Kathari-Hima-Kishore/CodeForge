@@ -29,7 +29,7 @@ const roleLabels: Record<Role, string> = {
 };
 
 export function ParticipantsPanel() {
-  const { session, changeUserRole, kickUser } = useSession();
+  const { session, changeUserRole, kickUser, user } = useSession();
 
   if (!session) {
     return (
@@ -39,10 +39,26 @@ export function ParticipantsPanel() {
     );
   }
 
-  const participants = Object.values(session.participants);
-  const isHost = session.role === 'host';
-  const isCoHost = session.role === 'co-host';
+  const participants = Object.values(session.participants).sort((a, b) => {
+    const leftJoinedAt = Number.isFinite(a.joinedAt) ? a.joinedAt : Number.MAX_SAFE_INTEGER;
+    const rightJoinedAt = Number.isFinite(b.joinedAt) ? b.joinedAt : Number.MAX_SAFE_INTEGER;
+
+    if (leftJoinedAt !== rightJoinedAt) {
+      return leftJoinedAt - rightJoinedAt;
+    }
+
+    return a.uid.localeCompare(b.uid);
+  });
+  const actorRole = user ? (session.participants[user.uid]?.role || session.role) : session.role;
+  const isHost = actorRole === 'host';
+  const isCoHost = actorRole === 'co-host';
   const canManage = isHost || isCoHost;
+
+  const canManageRoleForParticipant = (participant: typeof participants[number], isCurrentUser: boolean) => {
+    if (!canManage || isCurrentUser) return false;
+    if (isHost) return participant.role !== 'host';
+    return participant.role === 'editor' || participant.role === 'viewer';
+  };
 
   const handleRoleChange = (userId: string, newRole: Role) => {
     changeUserRole(userId, newRole);
@@ -60,7 +76,13 @@ export function ParticipantsPanel() {
         {participants.length} participant{participants.length !== 1 ? 's' : ''}
       </div>
       
-      {participants.map((p) => (
+      {participants.map((p) => {
+        const participantName = typeof p.name === 'string' && p.name.trim() ? p.name : 'User';
+        const participantInitial = participantName.charAt(0).toUpperCase();
+        const isCurrentUser = user?.uid === p.uid;
+        const canManageParticipant = canManageRoleForParticipant(p, isCurrentUser);
+
+        return (
         <div 
           key={p.uid} 
           className={cn(
@@ -71,7 +93,7 @@ export function ParticipantsPanel() {
           <div className="flex items-center gap-3">
             <Avatar className="relative h-9 w-9">
               <AvatarFallback style={{ backgroundColor: p.color }}>
-                {p.name.charAt(0).toUpperCase()}
+                {participantInitial}
               </AvatarFallback>
               <div 
                 className={cn(
@@ -82,8 +104,8 @@ export function ParticipantsPanel() {
             </Avatar>
             <div>
               <p className="font-medium text-sm flex items-center gap-2">
-                {p.name}
-                {p.uid === 'current-user' && (
+                {participantName}
+                {isCurrentUser && (
                   <span className="text-xs text-muted-foreground">(you)</span>
                 )}
               </p>
@@ -94,7 +116,7 @@ export function ParticipantsPanel() {
             </div>
           </div>
           
-          {canManage && p.role !== 'host' && p.uid !== 'current-user' && (
+          {canManageParticipant && (
             <div className="flex items-center gap-2">
               <Select 
                 value={p.role} 
@@ -123,7 +145,8 @@ export function ParticipantsPanel() {
             </div>
           )}
         </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
