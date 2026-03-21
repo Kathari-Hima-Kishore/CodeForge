@@ -2812,70 +2812,38 @@ fi
             fs.chmodSync(path.join(tmpDir, 'start.sh'), 0o755);
           }
 
-          // Regenerate requirements.txt with proper packages
-          const detectedPythonPackages = detectPythonPackages(files);
-          console.log('[Render Deploy] Detected Python packages:', detectedPythonPackages);
-          let reqLines = ['Flask>=2.3.0', 'gunicorn>=20.0.0'];
-          detectedPythonPackages.forEach((pkg) => {
-            if (pkg.toLowerCase() !== 'flask' && pkg.toLowerCase() !== 'gunicorn' && !reqLines.some(line => line.toLowerCase().startsWith(pkg.toLowerCase()))) {
-              reqLines.push(pkg);
-            }
-          });
-          const reqContent = reqLines.join('\n') + '\n';
-          fs.writeFileSync(path.join(tmpDir, 'requirements.txt'), reqContent);
-          console.log('[Render Deploy] Regenerated requirements.txt for Flask:', reqContent);
-
           // Extract app module from entry file (e.g., app.py -> app)
           const appModule = mainPy.replace('.py', '');
 
-          // ✅ Always use gunicorn with dynamic app module name
-          dockerfile = `FROM ${pythonVersion}\nWORKDIR /app\nCOPY requirements.txt .\nRUN pip install --no-cache-dir -r requirements.txt\nCOPY . .\nENV PORT=10000\nEXPOSE 10000\nCMD ["gunicorn", "--bind", "0.0.0.0:10000", "${appModule}:app"]`;
+          // Use user's requirements.txt as-is if provided
+          if (files['requirements.txt']) {
+            dockerfile = `FROM ${pythonVersion}\nWORKDIR /app\nCOPY requirements.txt .\nRUN pip install --no-cache-dir -r requirements.txt\nCOPY . .\nENV PORT=10000\nEXPOSE 10000\nCMD ["gunicorn", "--bind", "0.0.0.0:10000", "${appModule}:app"]`;
+          } else {
+            dockerfile = `FROM ${pythonVersion}\nWORKDIR /app\nCOPY . .\nENV PORT=10000\nEXPOSE 10000\nCMD ["python", "${mainPy}"]`;
+          }
         } else if (isFastAPI) {
           // FastAPI: use uvicorn with 0.0.0.0
           const fastApiModule = mainPy.replace('.py', '') + ':app';
-          const detectedPythonPackages = detectPythonPackages(files);
-          let reqLines = ['fastapi>=0.100.0', 'uvicorn[standard]>=0.23.0'];
-          detectedPythonPackages.forEach((pkg) => {
-            if (pkg.toLowerCase() !== 'fastapi' && pkg.toLowerCase() !== 'uvicorn' && !reqLines.some(line => line.toLowerCase().startsWith(pkg.toLowerCase()))) {
-              reqLines.push(pkg);
-            }
-          });
-          const fastApiReqs = reqLines.join('\n') + '\n';
-          fs.writeFileSync(path.join(tmpDir, 'requirements.txt'), fastApiReqs);
-          dockerfile = `FROM ${pythonVersion}\nWORKDIR /app\nCOPY requirements.txt .\nRUN pip install --no-cache-dir -r requirements.txt\nCOPY . .\nENV PORT=10000\nEXPOSE 10000\nCMD ["uvicorn", "${fastApiModule}", "--host", "0.0.0.0", "--port", "10000"]`;
-        } else if (isDjango) {
-          const detectedPythonPackages = detectPythonPackages(files);
-          let reqLines = ['Django>=4.2.0', 'gunicorn>=21.0.0'];
-          detectedPythonPackages.forEach((pkg) => {
-            if (pkg.toLowerCase() !== 'django' && pkg.toLowerCase() !== 'gunicorn' && !reqLines.some(line => line.toLowerCase().startsWith(pkg.toLowerCase()))) {
-              reqLines.push(pkg);
-            }
-          });
-          const djangoReqs = reqLines.join('\n') + '\n';
-          fs.writeFileSync(path.join(tmpDir, 'requirements.txt'), djangoReqs);
-          dockerfile = `FROM ${pythonVersion}\nWORKDIR /app\nCOPY requirements.txt .\nRUN pip install --no-cache-dir -r requirements.txt\nCOPY . .\nENV PORT=10000\nENV PYTHONUNBUFFERED=1\nEXPOSE 10000\nCMD ["gunicorn", "--bind", "0.0.0.0:10000", "codeforge.wsgi:application"]`;
-        } else if (isStreamlit) {
-          const detectedPythonPackages = detectPythonPackages(files);
-          let reqLines = ['streamlit>=1.28.0'];
-          detectedPythonPackages.forEach((pkg) => {
-            if (pkg.toLowerCase() !== 'streamlit' && !reqLines.some(line => line.toLowerCase().startsWith(pkg.toLowerCase()))) {
-              reqLines.push(pkg);
-            }
-          });
-          const streamlitReqs = reqLines.join('\n') + '\n';
-          fs.writeFileSync(path.join(tmpDir, 'requirements.txt'), streamlitReqs);
-          dockerfile = `FROM ${pythonVersion}\nWORKDIR /app\nCOPY requirements.txt .\nRUN pip install --no-cache-dir -r requirements.txt\nCOPY . .\nENV PORT=10000\nEXPOSE 10000\nCMD ["streamlit", "run", "${mainPy}", "--server.port=10000", "--server.address=0.0.0.0"]`;
-        } else {
-          // Generic Python: try to detect if it reads PORT env or use start script
-          // Always regenerate requirements.txt with detected packages
-          let hasRequirements = !!files['requirements.txt'];
-          if (hasRequirements) {
-            const detectedPythonPackages = detectPythonPackages(files);
-            const reqLines = detectedPythonPackages.length > 0 ? detectedPythonPackages : [];
-            const reqContent = reqLines.join('\n') + (reqLines.length > 0 ? '\n' : '');
-            fs.writeFileSync(path.join(tmpDir, 'requirements.txt'), reqContent);
+          if (files['requirements.txt']) {
+            dockerfile = `FROM ${pythonVersion}\nWORKDIR /app\nCOPY requirements.txt .\nRUN pip install --no-cache-dir -r requirements.txt\nCOPY . .\nENV PORT=10000\nEXPOSE 10000\nCMD ["uvicorn", "${fastApiModule}", "--host", "0.0.0.0", "--port", "10000"]`;
+          } else {
+            dockerfile = `FROM ${pythonVersion}\nWORKDIR /app\nCOPY . .\nENV PORT=10000\nEXPOSE 10000\nCMD ["python", "-m", "uvicorn", "${fastApiModule}", "--host", "0.0.0.0", "--port", "10000"]`;
           }
-
+        } else if (isDjango) {
+          if (files['requirements.txt']) {
+            dockerfile = `FROM ${pythonVersion}\nWORKDIR /app\nCOPY requirements.txt .\nRUN pip install --no-cache-dir -r requirements.txt\nCOPY . .\nENV PORT=10000\nENV PYTHONUNBUFFERED=1\nEXPOSE 10000\nCMD ["gunicorn", "--bind", "0.0.0.0:10000", "codeforge.wsgi:application"]`;
+          } else {
+            dockerfile = `FROM ${pythonVersion}\nWORKDIR /app\nCOPY . .\nENV PORT=10000\nENV PYTHONUNBUFFERED=1\nEXPOSE 10000\nCMD ["python", "manage.py", "runserver", "0.0.0.0:10000"]`;
+          }
+        } else if (isStreamlit) {
+          if (files['requirements.txt']) {
+            dockerfile = `FROM ${pythonVersion}\nWORKDIR /app\nCOPY requirements.txt .\nRUN pip install --no-cache-dir -r requirements.txt\nCOPY . .\nENV PORT=10000\nEXPOSE 10000\nCMD ["streamlit", "run", "${mainPy}", "--server.port=10000", "--server.address=0.0.0.0"]`;
+          } else {
+            dockerfile = `FROM ${pythonVersion}\nWORKDIR /app\nCOPY . .\nENV PORT=10000\nEXPOSE 10000\nCMD ["streamlit", "run", "${mainPy}", "--server.port=10000", "--server.address=0.0.0.0"]`;
+          }
+        } else {
+          // Generic Python: use user's requirements.txt as-is if provided
+          let hasRequirements = !!files['requirements.txt'];
           if (hasStartScript) {
             if (hasRequirements) {
               dockerfile = `FROM ${pythonVersion}\nWORKDIR /app\nCOPY requirements.txt .\nRUN pip install --no-cache-dir -r requirements.txt\nCOPY . .\nENV PORT=10000\nEXPOSE 10000\nCMD sh start.sh`;
@@ -2883,7 +2851,7 @@ fi
               dockerfile = `FROM ${pythonVersion}\nWORKDIR /app\nCOPY . .\nENV PORT=10000\nEXPOSE 10000\nCMD sh start.sh`;
             }
           } else {
-            // Try to run the main file; if it reads PORT env, great
+            // Try to run the main file
             if (hasRequirements) {
               dockerfile = `FROM ${pythonVersion}\nWORKDIR /app\nCOPY requirements.txt .\nRUN pip install --no-cache-dir -r requirements.txt\nCOPY . .\nENV PORT=10000\nEXPOSE 10000\nCMD python ${mainPy}`;
             } else {
