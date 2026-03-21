@@ -2863,16 +2863,16 @@ fi
           let hasRequirements = !!files['requirements.txt'];
           if (hasStartScript) {
             if (hasRequirements) {
-              dockerfile = `FROM ${pythonVersion}\nWORKDIR /app\nCOPY requirements.txt .\nRUN pip install --no-cache-dir -r requirements.txt\nCOPY . .\nENV PORT=10000\nEXPOSE 10000\nCMD ["sh", "start.sh"]`;
+              dockerfile = `FROM ${pythonVersion}\nWORKDIR /app\nCOPY requirements.txt .\nRUN pip install --no-cache-dir -r requirements.txt\nCOPY . .\nENV PORT=10000\nEXPOSE 10000\nCMD sh start.sh`;
             } else {
-              dockerfile = `FROM ${pythonVersion}\nWORKDIR /app\nCOPY . .\nENV PORT=10000\nEXPOSE 10000\nCMD ["sh", "start.sh"]`;
+              dockerfile = `FROM ${pythonVersion}\nWORKDIR /app\nCOPY . .\nENV PORT=10000\nEXPOSE 10000\nCMD sh start.sh`;
             }
           } else {
             // Try to run the main file; if it reads PORT env, great
             if (hasRequirements) {
-              dockerfile = `FROM ${pythonVersion}\nWORKDIR /app\nCOPY requirements.txt .\nRUN pip install --no-cache-dir -r requirements.txt\nCOPY . .\nENV PORT=10000\nEXPOSE 10000\nCMD ["sh", "-c", "python ${mainPy}"]`;
+              dockerfile = `FROM ${pythonVersion}\nWORKDIR /app\nCOPY requirements.txt .\nRUN pip install --no-cache-dir -r requirements.txt\nCOPY . .\nENV PORT=10000\nEXPOSE 10000\nCMD python ${mainPy}`;
             } else {
-              dockerfile = `FROM ${pythonVersion}\nWORKDIR /app\nCOPY . .\nENV PORT=10000\nEXPOSE 10000\nCMD ["sh", "-c", "python ${mainPy}"]`;
+              dockerfile = `FROM ${pythonVersion}\nWORKDIR /app\nCOPY . .\nENV PORT=10000\nEXPOSE 10000\nCMD python ${mainPy}`;
             }
           }
         }
@@ -2903,6 +2903,7 @@ fi
       }
 
       emitOutput(`📝 Dockerfile:\n${dockerfile.split('\n').map(l => '   ' + l).join('\n')}\n`);
+      console.log('[Render Deploy] Generated Dockerfile:\n', dockerfile);
       fs.writeFileSync(path.join(tmpDir, 'Dockerfile'), dockerfile);
       const langName = hasPy ? 'Python' : (hasNode ? 'Node.js' : (hasJava ? 'Java' : (hasGo ? 'Go' : (hasCpp ? 'C++' : (hasRuby ? 'Ruby' : 'Node.js')))));
       emitOutput(`✅ Generated ${langName} Dockerfile\n`);
@@ -2915,9 +2916,9 @@ fi
     emitOutput(`🔨 Running: docker build -t ${imageName} .\n`);
     const buildResult = await spawnCmd(dockerCmd, ['build', '-t', imageName, '.'], tmpDir);
     if (buildResult.code !== 0) {
-      const buildOutput = buildResult.output.substring(0, 3000);
+      const buildOutput = buildResult.output.substring(0, 5000);
       console.log('[Render Deploy] FATAL: Docker build failed. Exit code:', buildResult.code);
-      console.log('[Render Deploy] Build output (first 500 chars):', buildOutput.substring(0, 500));
+      console.log('[Render Deploy] FULL Build output:\n', buildOutput);
       emitOutput(`❌ Docker build failed:\n${buildOutput}\n`, true);
       fs.rmSync(tmpDir, { recursive: true, force: true });
       return res.status(500).json({ error: 'Docker build failed', details: buildOutput });
