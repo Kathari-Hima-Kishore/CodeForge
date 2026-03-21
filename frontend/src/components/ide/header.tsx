@@ -49,6 +49,8 @@ export function IdeHeader() {
   const [dockerHubActualUsername, setDockerHubActualUsername] = useState('');
   const [isLoadingDockerHubRepos, setIsLoadingDockerHubRepos] = useState(false);
   const [dockerHubReposError, setDockerHubReposError] = useState('');
+  const [dockerHubValidated, setDockerHubValidated] = useState(false);
+  const [isValidatingDockerHub, setIsValidatingDockerHub] = useState(false);
   const [repoMode, setRepoMode] = useState<'auto' | 'create' | 'select' | null>(null);
   const [repoDropdownOpen, setRepoDropdownOpen] = useState(false);
   const [renderApiKey, setRenderApiKey] = useState('');
@@ -72,6 +74,16 @@ export function IdeHeader() {
   useEffect(() => {
     return () => resetBodyPointerEvents();
   }, []);
+
+  useEffect(() => {
+    // Reset validation when credentials change
+    setDockerHubValidated(false);
+    setDockerHubReposError('');
+    setDockerHubRepos([]);
+    setSelectedDockerHubRepo('');
+    setDockerHubCustomRepo('');
+    setRepoMode(null);
+  }, [dockerHubUsername, dockerHubPassword]);
 
   const fetchDockerHubRepos = useCallback(async () => {
     if (!dockerHubUsername || !dockerHubPassword) return;
@@ -97,6 +109,39 @@ export function IdeHeader() {
       setDockerHubReposError('Failed to fetch repositories');
     } finally {
       setIsLoadingDockerHubRepos(false);
+    }
+  }, [dockerHubUsername, dockerHubPassword]);
+
+  const validateDockerHubCredentials = useCallback(async () => {
+    if (!dockerHubUsername || !dockerHubPassword) {
+      setDockerHubReposError('Username and password are required');
+      return;
+    }
+    setIsValidatingDockerHub(true);
+    setDockerHubReposError('');
+    try {
+      const res = await fetch(`${BACKEND_URL}/api/dockerhub/repos?identifier=${encodeURIComponent(dockerHubUsername)}&password=${encodeURIComponent(dockerHubPassword)}`);
+      const data = await res.json();
+      console.log('[Docker Hub] Validation response:', data);
+      if (data.error) {
+        setDockerHubReposError(data.error);
+        setDockerHubValidated(false);
+      } else {
+        if (data.username) {
+          setDockerHubActualUsername(data.username);
+        }
+        if (data.repos && Array.isArray(data.repos)) {
+          setDockerHubRepos(data.repos.map((r: { name: string }) => r.name));
+        }
+        setDockerHubValidated(true);
+        setDockerHubReposError('');
+      }
+    } catch (err) {
+      console.error('[Docker Hub] Validation error:', err);
+      setDockerHubReposError('Failed to validate credentials');
+      setDockerHubValidated(false);
+    } finally {
+      setIsValidatingDockerHub(false);
     }
   }, [dockerHubUsername, dockerHubPassword]);
 
@@ -949,7 +994,39 @@ export function IdeHeader() {
                         />
                       </div>
 
-                      {dockerHubUsername && dockerHubPassword && (
+                      {dockerHubReposError && (
+                        <div className="p-2 rounded bg-red-500/10 border border-red-500/20">
+                          <p className="text-[11px] text-red-400">{dockerHubReposError}</p>
+                        </div>
+                      )}
+
+                      {!dockerHubValidated && dockerHubUsername && dockerHubPassword && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={validateDockerHubCredentials}
+                          disabled={isValidatingDockerHub}
+                          className="w-full h-9 text-xs"
+                        >
+                          {isValidatingDockerHub ? (
+                            <>
+                              <div className="w-3.5 h-3.5 border-2 border-primary border-t-transparent rounded-full animate-spin mr-2" />
+                              Connecting...
+                            </>
+                          ) : (
+                            'Connect to Docker Hub'
+                          )}
+                        </Button>
+                      )}
+
+                      {dockerHubValidated && (
+                        <div className="p-2 rounded bg-green-500/10 border border-green-500/20">
+                          <p className="text-[11px] text-green-400">✓ Connected to Docker Hub</p>
+                        </div>
+                      )}
+
+                      {dockerHubValidated && (
                         <div className="space-y-3">
                           <Label htmlFor="render-dh-repo" className="text-xs">Repository <span className="text-red-400">*</span></Label>
 
