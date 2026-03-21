@@ -948,102 +948,105 @@ export function IdeHeader() {
                           className="h-9 text-sm"
                         />
                       </div>
-                      <div className="space-y-3">
-                        <Label htmlFor="render-dh-repo" className="text-xs">Repository <span className="text-red-400">*</span></Label>
 
-                        {/* Mode Selector Button */}
-                        <div className="relative">
-                          <button
-                            type="button"
-                            onClick={() => setRepoDropdownOpen(!repoDropdownOpen)}
-                            className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm flex items-center justify-between hover:bg-background/80"
-                          >
-                            <span className="text-muted-foreground">
-                              {repoMode === null && 'Select option...'}
-                              {repoMode === 'auto' && 'Auto create'}
-                              {repoMode === 'create' && 'Create new repo'}
-                              {repoMode === 'select' && 'Select existing'}
-                            </span>
-                            <span className="text-xs">▼</span>
-                          </button>
+                      {dockerHubUsername && dockerHubPassword && (
+                        <div className="space-y-3">
+                          <Label htmlFor="render-dh-repo" className="text-xs">Repository <span className="text-red-400">*</span></Label>
 
-                          {repoDropdownOpen && (
-                            <div className="absolute top-full left-0 right-0 mt-1 border border-input rounded-md bg-background shadow-md z-50">
-                              <div
-                                className="h-9 px-3 flex items-center hover:bg-accent cursor-pointer text-sm"
-                                onClick={() => {
-                                  setRepoMode('auto');
-                                  setSelectedDockerHubRepo('');
+                          {/* Mode Selector Button */}
+                          <div className="relative">
+                            <button
+                              type="button"
+                              onClick={() => setRepoDropdownOpen(!repoDropdownOpen)}
+                              className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm flex items-center justify-between hover:bg-background/80"
+                            >
+                              <span className="text-muted-foreground">
+                                {repoMode === null && 'Select option...'}
+                                {repoMode === 'auto' && 'Auto create'}
+                                {repoMode === 'create' && 'Create new repo'}
+                                {repoMode === 'select' && 'Select existing'}
+                              </span>
+                              <span className="text-xs">▼</span>
+                            </button>
+
+                            {repoDropdownOpen && (
+                              <div className="absolute top-full left-0 right-0 mt-1 border border-input rounded-md bg-background shadow-md z-50">
+                                <div
+                                  className="h-9 px-3 flex items-center hover:bg-accent cursor-pointer text-sm"
+                                  onClick={() => {
+                                    setRepoMode('auto');
+                                    setSelectedDockerHubRepo('');
+                                    setDockerHubCustomRepo('');
+                                    setRepoDropdownOpen(false);
+                                  }}
+                                >
+                                  Auto create
+                                </div>
+                                <div
+                                  className="h-9 px-3 flex items-center hover:bg-accent cursor-pointer text-sm border-t border-border/30"
+                                  onClick={() => {
+                                    setRepoMode('create');
+                                    setDockerHubCustomRepo('');
+                                    setSelectedDockerHubRepo('');
+                                    setRepoDropdownOpen(false);
+                                  }}
+                                >
+                                  Create new repo
+                                </div>
+                                <div
+                                  className="h-9 px-3 flex items-center hover:bg-accent cursor-pointer text-sm border-t border-border/30 whitespace-nowrap"
+                                  onClick={() => {
+                                    setRepoMode('select');
+                                    if (dockerHubRepos.length === 0) {
+                                      fetchDockerHubRepos();
+                                    }
+                                    setRepoDropdownOpen(false);
+                                  }}
+                                >
+                                  Select existing
+                                </div>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Create New Repo Input */}
+                          {repoMode === 'create' && (
+                            <Input
+                              placeholder="Enter repository name"
+                              value={dockerHubCustomRepo}
+                              onChange={(e) => {
+                                setDockerHubCustomRepo(e.target.value.toLowerCase().replace(/[^a-z0-9-_]/g, '-'));
+                                setSelectedDockerHubRepo('');
+                              }}
+                              className="h-9 text-sm"
+                            />
+                          )}
+
+                          {/* Select Existing Repo Dropdown */}
+                          {repoMode === 'select' && (
+                            <>
+                              <select
+                                id="render-dh-repo"
+                                value={selectedDockerHubRepo}
+                                onChange={(e) => {
+                                  setSelectedDockerHubRepo(e.target.value);
                                   setDockerHubCustomRepo('');
-                                  setRepoDropdownOpen(false);
                                 }}
+                                className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm"
+                                disabled={isLoadingDockerHubRepos || dockerHubRepos.length === 0}
                               >
-                                Auto create
-                              </div>
-                              <div
-                                className="h-9 px-3 flex items-center hover:bg-accent cursor-pointer text-sm border-t border-border/30"
-                                onClick={() => {
-                                  setRepoMode('create');
-                                  setDockerHubCustomRepo('');
-                                  setSelectedDockerHubRepo('');
-                                  setRepoDropdownOpen(false);
-                                }}
-                              >
-                                Create new repo
-                              </div>
-                              <div
-                                className="h-9 px-3 flex items-center hover:bg-accent cursor-pointer text-sm border-t border-border/30 whitespace-nowrap"
-                                onClick={() => {
-                                  setRepoMode('select');
-                                  if (dockerHubRepos.length === 0) {
-                                    fetchDockerHubRepos();
-                                  }
-                                  setRepoDropdownOpen(false);
-                                }}
-                              >
-                                Select existing
-                              </div>
-                            </div>
+                                <option value="">{isLoadingDockerHubRepos ? 'Loading...' : dockerHubRepos.length > 0 ? 'Select a repository' : 'No repositories found'}</option>
+                                {dockerHubRepos.map(repo => (
+                                  <option key={repo} value={repo}>{repo}</option>
+                                ))}
+                              </select>
+                              {dockerHubReposError && (
+                                <p className="text-xs text-red-400">{dockerHubReposError}</p>
+                              )}
+                            </>
                           )}
                         </div>
-
-                        {/* Create New Repo Input */}
-                        {repoMode === 'create' && (
-                          <Input
-                            placeholder="Enter repository name"
-                            value={dockerHubCustomRepo}
-                            onChange={(e) => {
-                              setDockerHubCustomRepo(e.target.value.toLowerCase().replace(/[^a-z0-9-_]/g, '-'));
-                              setSelectedDockerHubRepo('');
-                            }}
-                            className="h-9 text-sm"
-                          />
-                        )}
-
-                        {/* Select Existing Repo Dropdown */}
-                        {repoMode === 'select' && (
-                          <>
-                            <select
-                              id="render-dh-repo"
-                              value={selectedDockerHubRepo}
-                              onChange={(e) => {
-                                setSelectedDockerHubRepo(e.target.value);
-                                setDockerHubCustomRepo('');
-                              }}
-                              className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm"
-                              disabled={isLoadingDockerHubRepos || dockerHubRepos.length === 0}
-                            >
-                              <option value="">{isLoadingDockerHubRepos ? 'Loading...' : dockerHubRepos.length > 0 ? 'Select a repository' : 'No repositories found'}</option>
-                              {dockerHubRepos.map(repo => (
-                                <option key={repo} value={repo}>{repo}</option>
-                              ))}
-                            </select>
-                            {dockerHubReposError && (
-                              <p className="text-xs text-red-400">{dockerHubReposError}</p>
-                            )}
-                          </>
-                        )}
-                      </div>
+                      )}
                     </div>
 
                       <div className="space-y-1">
