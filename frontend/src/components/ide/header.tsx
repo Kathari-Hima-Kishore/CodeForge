@@ -952,7 +952,6 @@ export function IdeHeader() {
                         placeholder={session?.name?.toLowerCase().replace(/[^a-z0-9]/g, '-') || 'my-service'}
                         className="h-9 text-sm"
                       />
-                      <p className="text-[10px] text-muted-foreground">URL: {(renderServiceName || session?.name?.toLowerCase().replace(/[^a-z0-9]/g, '-') || 'my-service')}.onrender.com</p>
                     </div>
 
                     <div className="border-t border-border/30 pt-3 space-y-2">
