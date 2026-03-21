@@ -2814,6 +2814,7 @@ fi
 
           // Regenerate requirements.txt with proper packages
           const detectedPythonPackages = detectPythonPackages(files);
+          console.log('[Render Deploy] Detected Python packages:', detectedPythonPackages);
           let reqLines = ['Flask>=2.3.0', 'gunicorn>=20.0.0'];
           detectedPythonPackages.forEach((pkg) => {
             if (pkg.toLowerCase() !== 'flask' && pkg.toLowerCase() !== 'gunicorn' && !reqLines.some(line => line.toLowerCase().startsWith(pkg.toLowerCase()))) {
@@ -2822,6 +2823,7 @@ fi
           });
           const reqContent = reqLines.join('\n') + '\n';
           fs.writeFileSync(path.join(tmpDir, 'requirements.txt'), reqContent);
+          console.log('[Render Deploy] Regenerated requirements.txt for Flask:', reqContent);
 
           // Extract app module from entry file (e.g., app.py -> app)
           const appModule = mainPy.replace('.py', '');
@@ -2926,8 +2928,8 @@ fi
 
     // Build the image
     console.log('[Render Deploy] Step 5: Running docker build...');
-    emitOutput(`🔨 Running: docker build -t ${imageName} .\n`);
-    const buildResult = await spawnCmd(dockerCmd, ['build', '-t', imageName, '.'], tmpDir);
+    emitOutput(`🔨 Running: docker build --no-cache -t ${imageName} .\n`);
+    const buildResult = await spawnCmd(dockerCmd, ['build', '--no-cache', '-t', imageName, '.'], tmpDir);
     if (buildResult.code !== 0) {
       const buildOutput = buildResult.output.substring(0, 5000);
       console.log('[Render Deploy] FATAL: Docker build failed. Exit code:', buildResult.code);
