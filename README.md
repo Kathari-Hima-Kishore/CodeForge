@@ -6,53 +6,7 @@
 ![Status](https://img.shields.io/badge/status-Production%20Ready-green)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
----
-
-## 🎯 Homepage & User Experience
-
-### **Landing Flow**
-
-When you visit CodeForge, you're greeted with a **Cyberpunk Command Center** aesthetic:
-
-```
-1️⃣  AUTHENTICATION PAGE (localhost:9002)
-    ├─ Futuristic login/registration interface
-    ├─ Email verification screen (if unverified)
-    └─ Password reset via email
-
-2️⃣  SESSION DIALOG
-    ├─ Create new collaborative session
-    ├─ Join existing session via code
-    └─ View your session history
-
-3️⃣  FULL IDE EXPERIENCE
-    ├─ 📝 Multi-file editor with tabs
-    ├─ 📁 File explorer with folder support
-    ├─ ▶️ Code execution with live output
-    ├─ 🖥️ Terminal with full shell access
-    ├─ 💬 Real-time chat with participants
-    ├─ 👥 Participant list (with roles)
-    ├─ 🐳 Docker Hub deployment
-    └─ 🌐 Render.com deployment
-```
-
-### **Key Homepage Features**
-
-| Feature | Description |
-|---------|-------------|
-| **Cyberpunk UI** | Dark mode with neon accents, glitch effects, and smooth animations |
-| **One-Click Auth** | Register with email, auto-verified via confirmation link |
-| **Session Codes** | Share 8-character session codes with collaborators |
-| **Role System** | Host, Co-Host, Editor, Viewer with granular permissions |
-| **No Installation** | Pure browser-based — just login and start coding |
-
-### **Homepage Screenshot**
-
 ![CodeForge Homepage](./image.png)
-
-*Left panel: Headline with collaborative features | Right panel: Sign-in form*
-
-After authentication → **Session join/create screen** → **Full IDE editor**
 
 ---
 
