@@ -88,11 +88,11 @@ npm install
 Create `frontend/.env.local`:
 ```env
 NEXT_PUBLIC_FIREBASE_API_KEY=your_api_key
-NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=codeforge-khk.firebaseapp.com
-NEXT_PUBLIC_FIREBASE_PROJECT_ID=codeforge-khk
-NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=codeforge-khk.firebasestorage.app
-NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=661234466057
-NEXT_PUBLIC_FIREBASE_APP_ID=1:661234466057:web:fc0af044739b9c5e9da7d8
+NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN= your_api_key
+NEXT_PUBLIC_FIREBASE_PROJECT_ID=your_api_key
+NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=your_api_key
+NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=your_api_key
+NEXT_PUBLIC_FIREBASE_APP_ID=your_api_key
 NEXT_PUBLIC_BACKEND_URL=http://localhost:5001
 ```
 
@@ -332,7 +332,7 @@ This project is licensed under the MIT License — see LICENSE file for details.
 - **Issues** — Open a GitHub issue for bugs
 - **Features** — Request features via GitHub discussions
 - **Documentation** — See [PROJECT.md](./PROJECT.md) for detailed docs
-- **FAQ** — Common questions in [FAQ.md](./FAQ.md) (coming soon)
+
 
 ---
 
