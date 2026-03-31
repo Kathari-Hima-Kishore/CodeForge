@@ -46,28 +46,11 @@ When you visit CodeForge, you're greeted with a **Cyberpunk Command Center** aes
 | **Role System** | Host, Co-Host, Editor, Viewer with granular permissions |
 | **No Installation** | Pure browser-based — just login and start coding |
 
-### **Visual Walkthrough**
+### **Homepage Screenshot**
 
-```
-┌─────────────────────────────────────────────────────┐
-│                  CODEFORGE COMMAND CENTER               │
-│                                                         │
-│  Welcome to CodeForge                                   │
-│                                                         │
-│  [ Create New Session ]    [ Join Session ]             │
-│                                                         │
-│  OR login with email:                                   │
-│                                                         │
-│  Email:      [________________]                         │
-│  Password:   [________________]                         │
-│                                                         │
-│  [ Login ]  [ Sign Up ]  [ Reset Password ]             │
-│                                                         │
-│  Don't have an account? Sign up (2 mins)                │
-│  Account Protection: Email verification required       │
-│                                                         │
-└─────────────────────────────────────────────────────────┘
-```
+![CodeForge Homepage](./image.png)
+
+*Left panel: Headline with collaborative features | Right panel: Sign-in form*
 
 After authentication → **Session join/create screen** → **Full IDE editor**
 
