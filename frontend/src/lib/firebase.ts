@@ -1,10 +1,8 @@
 import { initializeApp, getApps, FirebaseApp } from 'firebase/app';
-import { getAuth, Auth, initializeAuth, inMemoryPersistence } from 'firebase/auth';
+import { getAuth, Auth, initializeAuth, browserLocalPersistence } from 'firebase/auth';
 import {
   getFirestore,
   Firestore,
-  initializeFirestore,
-  memoryLocalCache,
 } from 'firebase/firestore';
 
 // Firebase configuration - set these in .env.local
@@ -53,22 +51,15 @@ if (getApps().length === 0) {
   
   app = initializeApp(firebaseConfig);
   
-  // Keep auth state only in memory so nothing is persisted in the browser
+  // Persist auth state in browser localStorage so users stay logged in across refreshes
   auth = initializeAuth(app, {
-    persistence: inMemoryPersistence,
+    persistence: browserLocalPersistence,
   });
 
-  try {
-    db = initializeFirestore(app, {
-      localCache: memoryLocalCache(),
-    });
-    console.log("Firestore initialized with in-memory cache only");
-  } catch (error) {
-    db = getFirestore(app);
-    console.warn("Falling back to default Firestore setup:", error);
-  }
+  // Use default Firestore with persistent cache
+  db = getFirestore(app);
   
-  console.log("✅ Firebase app initialized (in-memory auth + in-memory Firestore cache)");
+  console.log("✅ Firebase app initialized (persistent auth + persistent Firestore cache)");
 } else {
   console.log("🔥 Firebase app already initialized");
   app = getApps()[0];

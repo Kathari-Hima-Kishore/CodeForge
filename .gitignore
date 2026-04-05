@@ -87,3 +87,5 @@ MASTER_CONTEXT.md
 .sisyphus/plans/
 firestore.rules
 DOCS.md
+PERSISTENCE_FIX_IMPLEMENTATION.md
+.gitignore

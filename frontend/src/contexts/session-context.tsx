@@ -1353,6 +1353,11 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         participants: { [user.uid]: participant },
       });
 
+      // Save to localStorage for auto-restore on page refresh
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('codeforge_session_id', sessionId);
+      }
+
       addOutput('success', `🎉 Session "${name}" created! Share code: ${sessionId}`);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to create session';
@@ -1421,6 +1426,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       });
 
       // Store session ID for auto-restore on page refresh
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('codeforge_session_id', normalizedId);
+      }
 
       applyPersistedFiles(data.files);
       applyPersistedMessages(data.messages);
@@ -1492,6 +1500,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       });
 
       // Store session ID for auto-restore on page refresh
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('codeforge_session_id', normalizedId);
+      }
 
       applyPersistedFiles(data.files);
       applyPersistedMessages(data.messages);
@@ -1504,6 +1515,35 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       setIsConnecting(false);
     }
   }, [user, addOutput, applyPersistedFiles, applyPersistedMessages, repairSessionDocument]);
+
+  // Auto-restore session on page load/refresh
+  useEffect(() => {
+    // Only run once when user logs in
+    if (!user || session) return;
+
+    const restoreSession = async () => {
+      if (typeof window === 'undefined') return;
+      
+      const savedSessionId = localStorage.getItem('codeforge_session_id');
+      if (!savedSessionId) return;
+
+      console.log('🔄 Auto-restoring session:', savedSessionId);
+      
+      try {
+        // Use rejoinSession which handles both host and participant cases
+        await rejoinSession(savedSessionId);
+        console.log('✅ Session auto-restored successfully');
+      } catch (error) {
+        console.warn('Failed to auto-restore session:', error);
+        // Clear invalid session from localStorage
+        localStorage.removeItem('codeforge_session_id');
+      }
+    };
+
+    // Small delay to ensure socket is connected
+    const timer = setTimeout(restoreSession, 500);
+    return () => clearTimeout(timer);
+  }, [user, session, rejoinSession]);
 
   // Leave the current session
   const leaveSession = useCallback(async () => {
@@ -1561,6 +1601,9 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       setCurrentFileId(null);
 
       // Clear stored session ID to prevent auto-restore
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem('codeforge_session_id');
+      }
 
       refreshMySessions();
     }
@@ -1591,6 +1634,12 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       setConnectionError(null);
       setFiles([]);
       setCurrentFileId(null);
+      
+      // Clear stored session ID when deleting session
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem('codeforge_session_id');
+      }
+      
       refreshMySessions();
     }
   }, [session, user, socket, refreshMySessions, flushPendingFileUpdates]);
