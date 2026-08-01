@@ -2,7 +2,7 @@
 
 <img src="readme-img/1.png" alt="CodeForge Homepage" width="100%">
 
-# 🔥 **CODEFORGE**
+#  **CODEFORGE**
 
 ### Real-Time Collaborative IDE • Zero Setup • Instant Deployment
 
